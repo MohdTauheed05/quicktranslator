@@ -95,14 +95,21 @@ fun HomeScreen(
     var showSourcePicker by remember { mutableStateOf(false) }
     var showTargetPicker by remember { mutableStateOf(false) }
 
-    fun readClipboardAndTranslate() {
+fun readClipboardAndTranslate() {
+        if (inputText.isNotBlank()) {
+            viewModel.translate(inputText)
+            onNavigateToTranslation()
+            return
+        }
+
         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
         if (clipboard != null && clipboard.hasPrimaryClip()) {
-            val clipDesc = clipboard.primaryClipDescription
-            if (clipDesc != null && clipDesc.hasMimeType(ClipDescription.MIMETYPE_TEXT_PLAIN)) {
-                val item = clipboard.primaryClip?.getItemAt(0)
-                val text = item?.text?.toString()?.trim()
+            val clip = clipboard.primaryClip
+            if (clip != null && clip.itemCount > 0) {
+                val item = clip.getItemAt(0)
+                val text = item.coerceToText(context)?.toString()?.trim()
                 if (!text.isNullOrBlank()) {
+                    viewModel.updateInputText(text)
                     viewModel.translate(text)
                     onNavigateToTranslation()
                     return
@@ -114,7 +121,6 @@ fun HomeScreen(
             onNavigateToTranslation()
         }
     }
-
     Scaffold(
         topBar = {
             TopAppBar(
