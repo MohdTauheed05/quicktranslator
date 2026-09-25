@@ -16,12 +16,9 @@ class TranslationRepository(
     private val userPreferences: UserPreferencesRepository,
     private val billingRepository: BillingRepository
 ) {
-    private val mockProvider = MockTranslationProvider()
-    private val geminiProvider = GeminiTranslationProvider(mockProvider)
-
-    val allHistory: Flow<List<TranslationHistoryEntity>> = translationDao.getAllHistory()
-    val allFavorites: Flow<List<FavoriteEntity>> = translationDao.getAllFavorites()
-
+    private val googleProvider = GoogleNeuralTranslationProvider()
+    private val geminiProvider = GeminiTranslationProvider(googleProvider)
+    
     suspend fun translate(
         text: String,
         sourceLang: Language,
@@ -53,7 +50,7 @@ class TranslationRepository(
         val provider: TranslationProvider = if (geminiProvider.isAvailable) {
             geminiProvider
         } else {
-            mockProvider
+            googleProvider
         }
 
         val result = provider.translate(
