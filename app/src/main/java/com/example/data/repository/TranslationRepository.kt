@@ -40,13 +40,6 @@ class TranslationRepository(
             )
         }
 
-        // Automatic Language Detection if source is AUTO
-        val detectedSource = if (sourceLang == Language.AUTO) {
-            LanguageDetector.detectLanguage(cleanText)
-        } else {
-            sourceLang
-        }
-
         // Check Business Mode
         val isBusinessMode = forceBusinessMode ?: userPreferences.businessModeEnabled.value
 
@@ -59,7 +52,7 @@ class TranslationRepository(
 
         val result = provider.translate(
             text = cleanText,
-            sourceLang = detectedSource,
+            sourceLang = sourceLang,
             targetLang = targetLang,
             isBusinessMode = isBusinessMode
         )
