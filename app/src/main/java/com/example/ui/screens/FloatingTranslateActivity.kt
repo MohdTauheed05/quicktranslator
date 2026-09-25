@@ -169,17 +169,20 @@ class FloatingTranslateActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        val text = extractTextFromIntent(intent) ?: readClipboardText()
+        val text = extractTextFromIntent(intent)
         if (!text.isNullOrBlank()) {
             textToTranslateState.value = text
             viewModel.translate(text)
+        } else {
+            checkAndAutoTranslateClipboard(force = true)
         }
     }
 
-    private fun checkAndAutoTranslateClipboard() {
-        if (textToTranslateState.value.isNullOrBlank() && viewModel.currentResult.value == null) {
-            val clip = readClipboardText()
-            if (!clip.isNullOrBlank()) {
+    private fun checkAndAutoTranslateClipboard(force: Boolean = false) {
+        val clip = readClipboardText()
+        if (!clip.isNullOrBlank()) {
+            val lastResult = viewModel.currentResult.value
+            if (force || lastResult == null || lastResult.originalText != clip) {
                 textToTranslateState.value = clip
                 viewModel.translate(clip)
             }
@@ -253,14 +256,11 @@ fun FloatingPopupCard(
             inputToTranslate = initialText
             viewModel.translate(initialText)
         } else if (currentResult == null) {
-            // Modern Android requires window focus before reading clipboard.
-            // Small delay ensures window has focus and automatically reads clipboard.
             kotlinx.coroutines.delay(150)
             onPasteRequested()
         }
     }
 
-    // Stop taps inside card from closing backdrop
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -457,6 +457,21 @@ fun FloatingPopupCard(
                     Icon(imageVector = Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(text = "Copy Translation & Back to Chat", fontWeight = FontWeight.Bold)
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Quick translate next copied message button
+                OutlinedButton(
+                    onClick = { onPasteRequested() },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(42.dp),
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Icon(imageVector = Icons.Default.ContentPaste, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(text = "📋 Translate Next Copied Message", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
                 }
 
                 Spacer(modifier = Modifier.height(8.dp))
