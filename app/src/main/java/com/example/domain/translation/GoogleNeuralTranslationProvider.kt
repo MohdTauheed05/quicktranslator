@@ -1,0 +1,135 @@
+package com.example.domain.translation
+
+import com.example.domain.model.Language
+import com.example.domain.model.TranslationResult
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import org.json.JSONArray
+import java.net.URLEncoder
+import java.util.concurrent.TimeUnit
+
+class GoogleNeuralTranslationProvider : TranslationProvider {
+
+    override val providerId: String = "google_neural"
+    override val providerName: String = "Google Neural Engine"
+    override val isAvailable: Boolean = true
+
+    private val client = OkHttpClient.Builder()
+        .connectTimeout(10, TimeUnit.SECONDS)
+        .readTimeout(12, TimeUnit.SECONDS)
+        .build()
+
+    override suspend fun translate(
+        text: String,
+        sourceLang: Language,
+        targetLang: Language,
+        isBusinessMode: Boolean
+    ): TranslationResult = withContext(Dispatchers.IO) {
+        val cleanInput = text.trim()
+        if (cleanInput.isEmpty()) {
+            return@withContext TranslationResult(
+                originalText = "",
+                translatedText = "",
+                detectedSourceLanguage = sourceLang,
+                targetLanguage = targetLang,
+                isDemo = false
+            )
+        }
+
+        val protectedData = if (isBusinessMode) {
+            BusinessTranslator.protectTokens(cleanInput)
+        } else {
+            ProtectedCommercialText(cleanInput, emptyMap(), emptyList())
+        }
+
+        val sourceCode = if (sourceLang == Language.AUTO) "auto" else sourceLang.code
+        val targetCode = targetLang.code
+
+        try {
+            val encodedQuery = URLEncoder.encode(protectedData.maskedText, "UTF-8")
+            val url = "https://translate.googleapis.com/translate_a/single?client=at&sl=$sourceCode&tl=$targetCode&dt=t&q=$encodedQuery"
+
+            val request = Request.Builder()
+                .url(url)
+                .header("User-Agent", "AndroidTranslate/5.3.0.RC02.130475354-53000263 5.1 phone TRANSLATE_OPM5_TEST_1")
+                .header("Accept", "*/*")
+                .get()
+                .build()
+
+            val response = client.newCall(request).execute()
+            if (response.isSuccessful) {
+                val bodyString = response.body?.string().orEmpty()
+                val parsed = parseTranslationResponse(bodyString)
+
+                if (parsed != null && parsed.translatedText.isNotBlank()) {
+                    val finalTranslation = if (isBusinessMode && protectedData.tokenMap.isNotEmpty()) {
+                        BusinessTranslator.restoreTokens(parsed.translatedText, protectedData.tokenMap)
+                    } else {
+                        parsed.translatedText
+                    }
+
+                    val detectedLang = if (sourceLang == Language.AUTO && parsed.detectedSourceCode.isNotBlank()) {
+                        Language.fromCode(parsed.detectedSourceCode)
+                    } else if (sourceLang != Language.AUTO) {
+                        sourceLang
+                    } else {
+                        LanguageDetector.detectLanguage(cleanInput)
+                    }
+
+                    return@withContext TranslationResult(
+                        originalText = cleanInput,
+                        translatedText = finalTranslation,
+                        detectedSourceLanguage = detectedLang,
+                        targetLanguage = targetLang,
+                        isDemo = false,
+                        providerName = providerName,
+                        isBusinessModeApplied = isBusinessMode && protectedData.extractedEntities.isNotEmpty(),
+                        preservedTokens = protectedData.extractedEntities
+                    )
+                }
+            }
+        } catch (e: Exception) {
+            // Network fallback
+        }
+
+        val offlineFallback = MockTranslationProvider()
+        offlineFallback.translate(cleanInput, sourceLang, targetLang, isBusinessMode)
+    }
+
+    private data class ParsedResponse(
+        val translatedText: String,
+        val detectedSourceCode: String
+    )
+
+    private fun parseTranslationResponse(rawJson: String): ParsedResponse? {
+        return try {
+            val rootArray = JSONArray(rawJson)
+            val segmentsArray = rootArray.optJSONArray(0) ?: return null
+
+            val sb = StringBuilder()
+            for (i in 0 until segmentsArray.length()) {
+                val segment = segmentsArray.optJSONArray(i)
+                if (segment != null) {
+                    val translatedPart = segment.optString(0, "")
+                    if (translatedPart != "null") {
+                        sb.append(translatedPart)
+                    }
+                }
+            }
+
+            var detectedCode = ""
+            if (rootArray.length() > 2) {
+                detectedCode = rootArray.optString(2, "")
+            }
+
+            ParsedResponse(
+                translatedText = sb.toString().trim(),
+                detectedSourceCode = detectedCode
+            )
+        } catch (e: Exception) {
+            null
+        }
+    }
+}
