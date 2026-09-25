@@ -155,11 +155,12 @@ class FloatingBubbleService : Service() {
 
         val intent = Intent(this, FloatingTranslateActivity::class.java).apply {
             action = FloatingTranslateActivity.ACTION_TRANSLATE_CLIPBOARD
-            putExtra(FloatingTranslateActivity.EXTRA_TEXT, clipboardText)
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            putExtra("timestamp", System.currentTimeMillis())
+            if (!clipboardText.isNullOrBlank()) {
+                putExtra(FloatingTranslateActivity.EXTRA_TEXT, clipboardText)
+            }
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
         }
-        startActivity(intent)
-    }
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
