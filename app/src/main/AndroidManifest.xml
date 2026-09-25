@@ -39,9 +39,12 @@
             android:exported="true"
             android:label="QuickTranslate"
             android:theme="@style/Theme.QuickTranslate.Floating"
-            android:launchMode="singleTop"
+            android:launchMode="singleTask"
+            android:taskAffinity="com.example.floating"
+            android:excludeFromRecents="true"
+            android:noHistory="false"
             android:windowSoftInputMode="adjustResize">
-
+            
             <!-- Contextual Text Selection integration (Highlight text -> QuickTranslate) -->
             <intent-filter>
                 <action android:name="android.intent.action.PROCESS_TEXT" />
