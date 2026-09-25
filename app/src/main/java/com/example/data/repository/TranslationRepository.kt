@@ -6,6 +6,7 @@ import com.example.data.local.entities.TranslationHistoryEntity
 import com.example.domain.model.Language
 import com.example.domain.model.TranslationResult
 import com.example.domain.translation.GeminiTranslationProvider
+import com.example.domain.translation.GoogleNeuralTranslationProvider
 import com.example.domain.translation.LanguageDetector
 import com.example.domain.translation.MockTranslationProvider
 import com.example.domain.translation.TranslationProvider
@@ -17,8 +18,11 @@ class TranslationRepository(
     private val billingRepository: BillingRepository
 ) {
     private val googleProvider = GoogleNeuralTranslationProvider()
-    private val geminiProvider = GeminiTranslationProvider(googleProvider)
-    
+    private val geminiProvider = GeminiTranslationProvider()
+
+    val allHistory: Flow<List<TranslationHistoryEntity>> = translationDao.getAllHistory()
+    val allFavorites: Flow<List<FavoriteEntity>> = translationDao.getAllFavorites()
+
     suspend fun translate(
         text: String,
         sourceLang: Language,
@@ -46,7 +50,7 @@ class TranslationRepository(
         // Check Business Mode
         val isBusinessMode = forceBusinessMode ?: userPreferences.businessModeEnabled.value
 
-        // Select translation provider (Gemini AI if available, else Mock Demo)
+        // Select translation provider: Gemini AI if configured, otherwise Google Neural Translation Engine
         val provider: TranslationProvider = if (geminiProvider.isAvailable) {
             geminiProvider
         } else {
