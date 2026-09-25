@@ -1,0 +1,6 @@
+{
+  "name": "QuickTranslate",
+  "description": "Universal instant translation assistant for WhatsApp, Telegram, and any copied or shared text.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
