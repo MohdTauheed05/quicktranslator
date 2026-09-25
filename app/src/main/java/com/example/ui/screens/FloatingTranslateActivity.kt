@@ -37,6 +37,7 @@ import androidx.compose.material.icons.filled.BusinessCenter
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Share
@@ -53,6 +54,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -91,13 +93,24 @@ class FloatingTranslateActivity : ComponentActivity() {
         )
     }
 
+    private val textToTranslateState = mutableStateOf<String?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        val textToTranslate = extractTextFromIntent(intent) ?: readClipboardText()
+        val textFromIntent = extractTextFromIntent(intent)
+        if (!textFromIntent.isNullOrBlank()) {
+            textToTranslateState.value = textFromIntent
+        } else {
+            val clipText = readClipboardText()
+            if (!clipText.isNullOrBlank()) {
+                textToTranslateState.value = clipText
+            }
+        }
 
         setContent {
             val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
+            val textToTranslate by textToTranslateState
 
             QuickTranslateTheme(themeMode = themeMode) {
                 // Dimmed translucent backdrop that closes dialog on outside tap
@@ -121,9 +134,54 @@ class FloatingTranslateActivity : ComponentActivity() {
                             copyToClipboard(text)
                             Toast.makeText(this@FloatingTranslateActivity, "Translated text copied!", Toast.LENGTH_SHORT).show()
                             finish()
+                        },
+                        onPasteRequested = {
+                            val clip = readClipboardText()
+                            if (!clip.isNullOrBlank()) {
+                                textToTranslateState.value = clip
+                                viewModel.translate(clip)
+                                true
+                            } else {
+                                Toast.makeText(this@FloatingTranslateActivity, "Clipboard is empty. Copy text in WhatsApp first!", Toast.LENGTH_SHORT).show()
+                                false
+                            }
                         }
                     )
                 }
+            }
+        }
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) {
+            checkAndAutoTranslateClipboard()
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        window.decorView.post {
+            checkAndAutoTranslateClipboard()
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        val text = extractTextFromIntent(intent) ?: readClipboardText()
+        if (!text.isNullOrBlank()) {
+            textToTranslateState.value = text
+            viewModel.translate(text)
+        }
+    }
+
+    private fun checkAndAutoTranslateClipboard() {
+        if (textToTranslateState.value.isNullOrBlank() && viewModel.currentResult.value == null) {
+            val clip = readClipboardText()
+            if (!clip.isNullOrBlank()) {
+                textToTranslateState.value = clip
+                viewModel.translate(clip)
             }
         }
     }
@@ -148,14 +206,13 @@ class FloatingTranslateActivity : ComponentActivity() {
 
     private fun readClipboardText(): String? {
         return try {
-            val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-            if (clipboard != null && clipboard.hasPrimaryClip()) {
-                val clipDesc = clipboard.primaryClipDescription
-                if (clipDesc != null && clipDesc.hasMimeType(ClipDescription.MIMETYPE_TEXT_PLAIN)) {
-                    val item = clipboard.primaryClip?.getItemAt(0)
-                    item?.text?.toString()?.trim()
-                } else null
-            } else null
+            val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager ?: return null
+            if (!clipboard.hasPrimaryClip()) return null
+            val clip = clipboard.primaryClip ?: return null
+            if (clip.itemCount == 0) return null
+            val item = clip.getItemAt(0) ?: return null
+            val text = item.coerceToText(this)?.toString()?.trim()
+            if (text.isNullOrBlank()) null else text
         } catch (e: Exception) {
             null
         }
@@ -179,7 +236,8 @@ fun FloatingPopupCard(
     viewModel: MainViewModel,
     initialText: String?,
     onDismiss: () -> Unit,
-    onCopyAndClose: (String) -> Unit
+    onCopyAndClose: (String) -> Unit,
+    onPasteRequested: () -> Boolean = { false }
 ) {
     val currentResult by viewModel.currentResult.collectAsStateWithLifecycle()
     val isLoading by viewModel.isLoading.collectAsStateWithLifecycle()
@@ -188,11 +246,17 @@ fun FloatingPopupCard(
     val isSaved by viewModel.isSavedCurrent.collectAsStateWithLifecycle()
 
     var inputToTranslate by remember { mutableStateOf(initialText ?: "") }
+    var manualInputText by remember { mutableStateOf("") }
 
     LaunchedEffect(initialText) {
         if (!initialText.isNullOrBlank()) {
             inputToTranslate = initialText
             viewModel.translate(initialText)
+        } else if (currentResult == null) {
+            // Modern Android requires window focus before reading clipboard.
+            // Small delay ensures window has focus and automatically reads clipboard.
+            kotlinx.coroutines.delay(150)
+            onPasteRequested()
         }
     }
 
@@ -435,26 +499,78 @@ fun FloatingPopupCard(
                     }
                 }
             } else {
-                // Empty clipboard / no text
+                // Empty clipboard / no text yet
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(vertical = 12.dp),
+                        .padding(vertical = 8.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Text(
-                        text = "No message to translate",
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.SemiBold
+                        text = "Instant WhatsApp Translation",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
                     )
-                    Spacer(modifier = Modifier.height(6.dp))
+                    Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = "Copy any message in WhatsApp or Telegram, then tap the floating bubble or QuickTranslate.",
+                        text = "Copy any message in your chat, then tap 'Paste' below:",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+
                     Spacer(modifier = Modifier.height(14.dp))
-                    Button(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) {
+
+                    // Primary Paste Button
+                    Button(
+                        onClick = {
+                            val success = onPasteRequested()
+                            if (!success && manualInputText.isNotBlank()) {
+                                viewModel.translate(manualInputText)
+                            }
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(50.dp)
+                            .testTag("floating_popup_paste_button"),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                    ) {
+                        Icon(imageVector = Icons.Default.ContentPaste, contentDescription = null, modifier = Modifier.size(20.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(text = "📋 Paste Copied Message", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    OutlinedTextField(
+                        value = manualInputText,
+                        onValueChange = { manualInputText = it },
+                        placeholder = {
+                            Text("Or type/paste text directly here...", style = MaterialTheme.typography.bodySmall)
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        minLines = 2,
+                        maxLines = 4,
+                        shape = RoundedCornerShape(12.dp)
+                    )
+
+                    if (manualInputText.isNotBlank()) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Button(
+                            onClick = { viewModel.translate(manualInputText) },
+                            modifier = Modifier.fillMaxWidth().height(44.dp),
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Text("Translate This Message", fontWeight = FontWeight.Bold)
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(14.dp))
+                    OutlinedButton(
+                        onClick = onDismiss,
+                        modifier = Modifier.fillMaxWidth().height(42.dp),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
                         Text("Close")
                     }
                 }
