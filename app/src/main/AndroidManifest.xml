@@ -70,6 +70,20 @@
                 android:value="Floating quick translation assistant for messaging apps" />
         </service>
 
+        <!-- QuickTranslate Custom Keyboard (InputMethodService) -->
+        <service
+            android:name=".keyboard.QuickTranslateKeyboardService"
+            android:label="@string/keyboard_name"
+            android:permission="android.permission.BIND_INPUT_METHOD"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.view.InputMethod" />
+            </intent-filter>
+            <meta-data
+                android:name="android.view.im"
+                android:resource="@xml/method" />
+        </service>
+
     </application>
 
 </manifest>
