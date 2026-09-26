@@ -95,15 +95,18 @@ fun HomeScreen(
 
     var showSourcePicker by remember { mutableStateOf(false) }
     var showTargetPicker by remember { mutableStateOf(false) }
+    var speechSuggestions by remember { mutableStateOf<List<String>>(emptyList()) }
 
     val speechLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
         contract = androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()
     ) { result ->
         if (result.resultCode == android.app.Activity.RESULT_OK) {
-            val spoken = result.data?.getStringArrayListExtra(android.speech.RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()
-            if (!spoken.isNullOrBlank()) {
-                viewModel.updateInputText(spoken)
-                viewModel.translate(spoken)
+            val candidates = result.data?.getStringArrayListExtra(android.speech.RecognizerIntent.EXTRA_RESULTS) ?: arrayListOf()
+            val (bestSpoken, suggestions) = com.example.domain.translation.SpeechCorrector.processSpeechResults(candidates)
+            if (bestSpoken.isNotBlank()) {
+                viewModel.updateInputText(bestSpoken)
+                speechSuggestions = suggestions
+                viewModel.translate(bestSpoken)
                 onNavigateToTranslation()
             }
         }
@@ -113,6 +116,9 @@ fun HomeScreen(
         val intent = android.content.Intent(android.speech.RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(android.speech.RecognizerIntent.EXTRA_LANGUAGE_MODEL, android.speech.RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(android.speech.RecognizerIntent.EXTRA_PROMPT, "Speak now to translate...")
+            putExtra(android.speech.RecognizerIntent.EXTRA_MAX_RESULTS, 5)
+            // Acoustic multi-language hints prevent forcing English/trade brand names (Venol, Ajman, etc.) into Hindi names (Vinod)
+            putExtra("android.speech.extra.EXTRA_ADDITIONAL_LANGUAGES", arrayOf("en-IN", "en-US", "hi-IN", "ur-PK"))
             if (sourceLang != Language.AUTO) {
                 putExtra(android.speech.RecognizerIntent.EXTRA_LANGUAGE, sourceLang.code)
             }
@@ -250,7 +256,7 @@ fun HomeScreen(
 
             Spacer(modifier = Modifier.height(10.dp))
 
-            // NEW: Instant WhatsApp Floating Bubble Card
+            // NEW: Samsung-style Edge Pull Handle Card
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -281,13 +287,13 @@ fun HomeScreen(
                     Spacer(modifier = Modifier.width(12.dp))
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "Instant Floating Bubble",
+                            text = "Samsung Edge Pull Handle",
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.Bold,
                             color = if (floatingBubbleEnabled) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
                         )
                         Text(
-                            text = if (floatingBubbleEnabled) "Active over WhatsApp! Tap the bubble to translate copied messages." else "Show floating bubble over WhatsApp for instant 1-tap translation.",
+                            text = if (floatingBubbleEnabled) "Active on screen edge! Pull or tap the edge line over WhatsApp to translate." else "Show slim Samsung-style edge line for 1-pull instant translation over WhatsApp.",
                             style = MaterialTheme.typography.bodySmall,
                             color = if (floatingBubbleEnabled) MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f) else MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -470,6 +476,41 @@ fun HomeScreen(
                             unfocusedContainerColor = MaterialTheme.colorScheme.surface
                         )
                     )
+
+                    if (speechSuggestions.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Text(
+                                text = "Did you mean:",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            speechSuggestions.forEach { alt ->
+                                Surface(
+                                    onClick = {
+                                        viewModel.updateInputText(alt)
+                                        viewModel.translate(alt)
+                                        speechSuggestions = emptyList()
+                                        onNavigateToTranslation()
+                                    },
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = MaterialTheme.colorScheme.secondaryContainer
+                                ) {
+                                    Text(
+                                        text = alt,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
 
                     if (errorMessage != null) {
                         Text(
@@ -726,7 +767,7 @@ fun HomeScreen(
                     }
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = "1. Floating Bubble: Enable the switch above. When you copy a message in WhatsApp, tap the floating bubble to see the instant translation popup directly over your chat.\n\n2. Highlight & QuickTranslate: Select message text in WhatsApp -> tap [ QuickTranslate ] in the popup menu to translate without leaving the app.",
+                        text = "1. Samsung Edge Pull Handle: Enable the switch above. Pull the edge line inward from the side of the screen over WhatsApp to translate copied messages.\n\n2. Highlight & QuickTranslate: Select message text in WhatsApp -> tap [ QuickTranslate ] in the popup menu to translate without leaving the app.",
                         style = MaterialTheme.typography.bodySmall,
                         lineHeight = 18.sp,
                         color = MaterialTheme.colorScheme.onSurface
@@ -741,7 +782,7 @@ fun HomeScreen(
             onDismissRequest = { viewModel.dismissOverlayPermissionDialog() },
             title = { Text("Enable Display Over Other Apps") },
             text = {
-                Text("To show the instant translation popup and floating bubble directly over WhatsApp, Android requires the 'Display over other apps' permission.")
+                Text("To show the Samsung Edge Handle and instant translation popup directly over WhatsApp, Android requires the 'Display over other apps' permission.")
             },
             confirmButton = {
                 Button(onClick = { viewModel.requestOverlayPermission(context) }) {
