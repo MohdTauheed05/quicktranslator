@@ -1,4 +1,5 @@
 <resources>
     <string name="app_name">QuickTranslate</string>
+    <string name="keyboard_name">QuickTranslate Keyboard</string>
     <string name="tagline">Translate Any Message Instantly</string>
 </resources>
