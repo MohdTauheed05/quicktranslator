@@ -30,6 +30,7 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.SwapHoriz
@@ -95,7 +96,35 @@ fun HomeScreen(
     var showSourcePicker by remember { mutableStateOf(false) }
     var showTargetPicker by remember { mutableStateOf(false) }
 
-fun readClipboardAndTranslate() {
+    val speechLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        contract = androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == android.app.Activity.RESULT_OK) {
+            val spoken = result.data?.getStringArrayListExtra(android.speech.RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()
+            if (!spoken.isNullOrBlank()) {
+                viewModel.updateInputText(spoken)
+                viewModel.translate(spoken)
+                onNavigateToTranslation()
+            }
+        }
+    }
+
+    fun launchVoiceInput() {
+        val intent = android.content.Intent(android.speech.RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(android.speech.RecognizerIntent.EXTRA_LANGUAGE_MODEL, android.speech.RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(android.speech.RecognizerIntent.EXTRA_PROMPT, "Speak now to translate...")
+            if (sourceLang != Language.AUTO) {
+                putExtra(android.speech.RecognizerIntent.EXTRA_LANGUAGE, sourceLang.code)
+            }
+        }
+        try {
+            speechLauncher.launch(intent)
+        } catch (e: Exception) {
+            android.widget.Toast.makeText(context, "Voice input not supported on this device", android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    fun readClipboardAndTranslate() {
         if (inputText.isNotBlank()) {
             viewModel.translate(inputText)
             onNavigateToTranslation()
@@ -121,6 +150,7 @@ fun readClipboardAndTranslate() {
             onNavigateToTranslation()
         }
     }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -405,9 +435,30 @@ fun readClipboardAndTranslate() {
                             )
                         },
                         trailingIcon = {
-                            if (inputText.isNotEmpty()) {
-                                IconButton(onClick = { viewModel.updateInputText("") }) {
-                                    Icon(imageVector = Icons.Default.Clear, contentDescription = "Clear")
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                IconButton(onClick = { launchVoiceInput() }) {
+                                    Icon(
+                                        imageVector = Icons.Default.Mic,
+                                        contentDescription = "Speak to Translate",
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                                if (inputText.isNotEmpty()) {
+                                    IconButton(onClick = { viewModel.updateInputText("") }) {
+                                        Icon(imageVector = Icons.Default.Clear, contentDescription = "Clear")
+                                    }
+                                } else {
+                                    IconButton(
+                                        onClick = {
+                                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                                            val text = clipboard?.primaryClip?.getItemAt(0)?.coerceToText(context)?.toString()?.trim()
+                                            if (!text.isNullOrBlank()) {
+                                                viewModel.updateInputText(text)
+                                            }
+                                        }
+                                    ) {
+                                        Icon(imageVector = Icons.Default.ContentPaste, contentDescription = "Paste from Clipboard", tint = MaterialTheme.colorScheme.primary)
+                                    }
                                 }
                             }
                         },
