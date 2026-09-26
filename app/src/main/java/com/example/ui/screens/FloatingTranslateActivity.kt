@@ -262,19 +262,21 @@ fun FloatingPopupCard(
     var showSourcePicker by remember { mutableStateOf(false) }
     var showTargetPicker by remember { mutableStateOf(false) }
     var typeInputText by remember { mutableStateOf("") }
+    var speechSuggestions by remember { mutableStateOf<List<String>>(emptyList()) }
 
     val context = LocalContext.current
 
-    // Voice Speech-to-Text Recognition Launcher
+    // Voice Speech-to-Text Recognition Launcher with multi-language trade recognition
     val speechLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartActivityForResult()
     ) { actResult ->
         if (actResult.resultCode == Activity.RESULT_OK) {
-            val spokenList = actResult.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
-            val spoken = spokenList?.firstOrNull()
-            if (!spoken.isNullOrBlank()) {
-                typeInputText = spoken
-                viewModel.translate(spoken)
+            val candidates = actResult.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS) ?: arrayListOf()
+            val (bestSpoken, suggestions) = com.example.domain.translation.SpeechCorrector.processSpeechResults(candidates)
+            if (bestSpoken.isNotBlank()) {
+                typeInputText = bestSpoken
+                speechSuggestions = suggestions
+                viewModel.translate(bestSpoken)
             }
         }
     }
@@ -283,6 +285,9 @@ fun FloatingPopupCard(
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_PROMPT, "Speak now to translate...")
+            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5)
+            // Acoustic multi-language hints prevent forcing English/trade brand names (Venol, Ajman, etc.) into Hindi dictionary names (Vinod)
+            putExtra("android.speech.extra.EXTRA_ADDITIONAL_LANGUAGES", arrayOf("en-IN", "en-US", "hi-IN", "ur-PK"))
             if (sourceLang != Language.AUTO) {
                 putExtra(RecognizerIntent.EXTRA_LANGUAGE, sourceLang.code)
             }
@@ -492,7 +497,7 @@ fun FloatingPopupCard(
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            // 2 & 3. Typing & Voice Input Field (Always accessible inside popup)
+            // 2 & 3. Typing & Voice Input Field
             OutlinedTextField(
                 value = typeInputText,
                 onValueChange = { typeInputText = it },
@@ -532,6 +537,40 @@ fun FloatingPopupCard(
                     unfocusedContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.70f)
                 )
             )
+
+            if (speechSuggestions.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(6.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Text(
+                        text = "Did you mean:",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    speechSuggestions.forEach { alt ->
+                        Surface(
+                            onClick = {
+                                typeInputText = alt
+                                viewModel.translate(alt)
+                                speechSuggestions = emptyList()
+                            },
+                            shape = RoundedCornerShape(8.dp),
+                            color = MaterialTheme.colorScheme.secondaryContainer
+                        ) {
+                            Text(
+                                text = alt,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                            )
+                        }
+                    }
+                }
+            }
 
             if (typeInputText.isNotBlank()) {
                 Spacer(modifier = Modifier.height(8.dp))
@@ -714,7 +753,6 @@ fun FloatingPopupCard(
                         .padding(vertical = 4.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    // Primary Paste Button
                     Button(
                         onClick = { onPasteRequested() },
                         modifier = Modifier
