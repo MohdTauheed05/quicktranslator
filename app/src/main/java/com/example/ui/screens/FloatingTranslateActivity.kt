@@ -1,15 +1,19 @@
 package com.example.ui.screens
 
+import android.app.Activity
 import android.content.ClipData
-import android.content.ClipDescription
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
+import android.speech.RecognizerIntent
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -33,14 +37,16 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
-import androidx.compose.material.icons.filled.BusinessCenter
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.ContentPaste
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Save
-import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.Translate
@@ -55,6 +61,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -68,6 +75,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -77,6 +85,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.QuickTranslateApp
 import com.example.domain.model.Language
+import com.example.ui.components.LanguageSelectorModal
 import com.example.ui.theme.QuickTranslateTheme
 import com.example.ui.viewmodel.MainViewModel
 
@@ -117,13 +126,13 @@ class FloatingTranslateActivity : ComponentActivity() {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .background(Color.Black.copy(alpha = 0.55f))
+                        .background(Color.Black.copy(alpha = 0.45f))
                         .clickable(
                             interactionSource = remember { MutableInteractionSource() },
                             indication = null,
                             onClick = { finish() }
                         )
-                        .padding(horizontal = 20.dp, vertical = 32.dp),
+                        .padding(horizontal = 16.dp, vertical = 28.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     FloatingPopupCard(
@@ -247,13 +256,46 @@ fun FloatingPopupCard(
     val isSpeaking by viewModel.isSpeaking.collectAsStateWithLifecycle()
     val isBusinessMode by viewModel.businessModeEnabled.collectAsStateWithLifecycle()
     val isSaved by viewModel.isSavedCurrent.collectAsStateWithLifecycle()
+    val sourceLang by viewModel.sourceLanguage.collectAsStateWithLifecycle()
+    val targetLang by viewModel.targetLanguage.collectAsStateWithLifecycle()
 
-    var inputToTranslate by remember { mutableStateOf(initialText ?: "") }
-    var manualInputText by remember { mutableStateOf("") }
+    var showSourcePicker by remember { mutableStateOf(false) }
+    var showTargetPicker by remember { mutableStateOf(false) }
+    var typeInputText by remember { mutableStateOf("") }
+
+    val context = LocalContext.current
+
+    // Voice Speech-to-Text Recognition Launcher
+    val speechLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { actResult ->
+        if (actResult.resultCode == Activity.RESULT_OK) {
+            val spokenList = actResult.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
+            val spoken = spokenList?.firstOrNull()
+            if (!spoken.isNullOrBlank()) {
+                typeInputText = spoken
+                viewModel.translate(spoken)
+            }
+        }
+    }
+
+    fun launchVoiceInput() {
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_PROMPT, "Speak now to translate...")
+            if (sourceLang != Language.AUTO) {
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE, sourceLang.code)
+            }
+        }
+        try {
+            speechLauncher.launch(intent)
+        } catch (e: Exception) {
+            Toast.makeText(context, "Voice input not supported on this device", Toast.LENGTH_SHORT).show()
+        }
+    }
 
     LaunchedEffect(initialText) {
         if (!initialText.isNullOrBlank()) {
-            inputToTranslate = initialText
             viewModel.translate(initialText)
         } else if (currentResult == null) {
             kotlinx.coroutines.delay(150)
@@ -261,23 +303,64 @@ fun FloatingPopupCard(
         }
     }
 
+    // Modal Pickers for Language Changing
+    if (showSourcePicker) {
+        LanguageSelectorModal(
+            title = "Source Language",
+            currentLanguage = sourceLang,
+            allowAutoDetect = true,
+            onLanguageSelected = {
+                viewModel.setSourceLanguage(it)
+                showSourcePicker = false
+                if (typeInputText.isNotBlank()) {
+                    viewModel.translate(typeInputText)
+                } else currentResult?.let { r ->
+                    viewModel.translate(r.originalText)
+                }
+            },
+            onDismiss = { showSourcePicker = false }
+        )
+    }
+
+    if (showTargetPicker) {
+        LanguageSelectorModal(
+            title = "Target Language",
+            currentLanguage = targetLang,
+            allowAutoDetect = false,
+            onLanguageSelected = {
+                viewModel.setTargetLanguage(it)
+                showTargetPicker = false
+                if (typeInputText.isNotBlank()) {
+                    viewModel.translate(typeInputText)
+                } else currentResult?.let { r ->
+                    viewModel.translate(r.originalText)
+                }
+            },
+            onDismiss = { showTargetPicker = false }
+        )
+    }
+
+    // Frosted Semi-Transparent Floating Card
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .widthIn(max = 500.dp)
+            .widthIn(max = 520.dp)
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
                 onClick = { /* consume click */ }
             )
             .testTag("floating_popup_card"),
-        shape = RoundedCornerShape(24.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        shape = RoundedCornerShape(26.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f)
+        ),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)),
         elevation = CardDefaults.cardElevation(defaultElevation = 16.dp)
     ) {
         Column(
             modifier = Modifier
-                .padding(20.dp)
+                .padding(18.dp)
                 .verticalScroll(rememberScrollState())
         ) {
             // Header Bar
@@ -319,7 +402,154 @@ fun FloatingPopupCard(
                 }
             }
 
-            Spacer(modifier = Modifier.height(14.dp))
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // 1. Language Selector Bar (Tap to change source / target, or swap)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                // Source Language Selector Button
+                Surface(
+                    onClick = { showSourcePicker = true },
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.75f),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        Text(
+                            text = "${sourceLang.flagEmoji} ${sourceLang.name}",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Icon(
+                            imageVector = Icons.Default.ArrowDropDown,
+                            contentDescription = "Select Source Language",
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                }
+
+                // Swap Languages Button
+                IconButton(
+                    onClick = {
+                        viewModel.swapLanguages()
+                        if (typeInputText.isNotBlank()) {
+                            viewModel.translate(typeInputText)
+                        } else if (currentResult != null) {
+                            viewModel.translate(currentResult!!.originalText)
+                        }
+                    },
+                    modifier = Modifier
+                        .padding(horizontal = 4.dp)
+                        .size(36.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.SwapHoriz,
+                        contentDescription = "Swap Languages",
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+
+                // Target Language Selector Button
+                Surface(
+                    onClick = { showTargetPicker = true },
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.85f),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.3f)),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        Text(
+                            text = "${targetLang.flagEmoji} ${targetLang.name}",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            maxLines = 1
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Icon(
+                            imageVector = Icons.Default.ArrowDropDown,
+                            contentDescription = "Select Target Language",
+                            modifier = Modifier.size(16.dp),
+                            tint = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // 2 & 3. Typing & Voice Input Field (Always accessible inside popup)
+            OutlinedTextField(
+                value = typeInputText,
+                onValueChange = { typeInputText = it },
+                placeholder = {
+                    Text("Type message or tap mic to speak...", style = MaterialTheme.typography.bodySmall)
+                },
+                trailingIcon = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(onClick = { launchVoiceInput() }) {
+                            Icon(
+                                imageVector = Icons.Default.Mic,
+                                contentDescription = "Speak to Translate",
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                        if (typeInputText.isNotEmpty()) {
+                            IconButton(onClick = { typeInputText = "" }) {
+                                Icon(imageVector = Icons.Default.Clear, contentDescription = "Clear")
+                            }
+                        } else {
+                            IconButton(onClick = { onPasteRequested() }) {
+                                Icon(
+                                    imageVector = Icons.Default.ContentPaste,
+                                    contentDescription = "Paste Clipboard",
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                        }
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(),
+                minLines = 1,
+                maxLines = 3,
+                shape = RoundedCornerShape(14.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
+                    unfocusedContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.70f)
+                )
+            )
+
+            if (typeInputText.isNotBlank()) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Button(
+                    onClick = { viewModel.translate(typeInputText) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(42.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                ) {
+                    Icon(imageVector = Icons.Default.Send, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Translate Typed Message", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
 
             val result = currentResult
 
@@ -327,57 +557,20 @@ fun FloatingPopupCard(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(140.dp),
+                        .height(110.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        CircularProgressIndicator(modifier = Modifier.size(32.dp))
-                        Spacer(modifier = Modifier.height(10.dp))
+                        CircularProgressIndicator(modifier = Modifier.size(28.dp))
+                        Spacer(modifier = Modifier.height(8.dp))
                         Text(
-                            text = "Translating message...",
+                            text = "Translating...",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
             } else if (result != null && result.translatedText.isNotBlank()) {
-                // Language info chip row
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Surface(
-                        shape = RoundedCornerShape(8.dp),
-                        color = MaterialTheme.colorScheme.primaryContainer
-                    ) {
-                        Text(
-                            text = "${result.detectedSourceLanguage.flagEmoji} ${result.detectedSourceLanguage.name} → ${result.targetLanguage.flagEmoji} ${result.targetLanguage.name}",
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer,
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                        )
-                    }
-
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        IconButton(
-                            onClick = { viewModel.swapLanguages() },
-                            modifier = Modifier.size(32.dp)
-                        ) {
-                            Icon(imageVector = Icons.Default.SwapHoriz, contentDescription = "Swap", modifier = Modifier.size(18.dp))
-                        }
-                        IconButton(
-                            onClick = { viewModel.translate(result.originalText) },
-                            modifier = Modifier.size(32.dp)
-                        ) {
-                            Icon(imageVector = Icons.Default.Refresh, contentDescription = "Re-translate", modifier = Modifier.size(18.dp))
-                        }
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(10.dp))
-
                 // Original Text Preview (compact)
                 Surface(
                     shape = RoundedCornerShape(12.dp),
@@ -396,7 +589,7 @@ fun FloatingPopupCard(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(10.dp))
 
                 // Translated Text (large & clear)
                 val targetDir = if (result.targetLanguage.isRtl) LayoutDirection.Rtl else LayoutDirection.Ltr
@@ -440,9 +633,9 @@ fun FloatingPopupCard(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(16.dp))
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
-                Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(14.dp))
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
+                Spacer(modifier = Modifier.height(10.dp))
 
                 // Actions: Primary CTA [ Copy & Reply / Close ]
                 Button(
@@ -518,72 +711,28 @@ fun FloatingPopupCard(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(vertical = 8.dp),
+                        .padding(vertical = 4.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    Text(
-                        text = "Instant WhatsApp Translation",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = "Copy any message in your chat, then tap 'Paste' below:",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-
-                    Spacer(modifier = Modifier.height(14.dp))
-
                     // Primary Paste Button
                     Button(
-                        onClick = {
-                            val success = onPasteRequested()
-                            if (!success && manualInputText.isNotBlank()) {
-                                viewModel.translate(manualInputText)
-                            }
-                        },
+                        onClick = { onPasteRequested() },
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(50.dp)
+                            .height(48.dp)
                             .testTag("floating_popup_paste_button"),
                         shape = RoundedCornerShape(12.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
                     ) {
-                        Icon(imageVector = Icons.Default.ContentPaste, contentDescription = null, modifier = Modifier.size(20.dp))
+                        Icon(imageVector = Icons.Default.ContentPaste, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text(text = "📋 Paste Copied Message", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                        Text(text = "📋 Paste Copied Message", fontWeight = FontWeight.Bold, fontSize = 14.sp)
                     }
 
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    OutlinedTextField(
-                        value = manualInputText,
-                        onValueChange = { manualInputText = it },
-                        placeholder = {
-                            Text("Or type/paste text directly here...", style = MaterialTheme.typography.bodySmall)
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                        minLines = 2,
-                        maxLines = 4,
-                        shape = RoundedCornerShape(12.dp)
-                    )
-
-                    if (manualInputText.isNotBlank()) {
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Button(
-                            onClick = { viewModel.translate(manualInputText) },
-                            modifier = Modifier.fillMaxWidth().height(44.dp),
-                            shape = RoundedCornerShape(10.dp)
-                        ) {
-                            Text("Translate This Message", fontWeight = FontWeight.Bold)
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(14.dp))
+                    Spacer(modifier = Modifier.height(10.dp))
                     OutlinedButton(
                         onClick = onDismiss,
-                        modifier = Modifier.fillMaxWidth().height(42.dp),
+                        modifier = Modifier.fillMaxWidth().height(40.dp),
                         shape = RoundedCornerShape(10.dp)
                     ) {
                         Text("Close")
