@@ -82,7 +82,6 @@ class FloatingBubbleService : Service() {
         val bubbleContainer = FrameLayout(this).apply {
             val paddingPx = (10 * resources.displayMetrics.density).toInt()
             setPadding(paddingPx, paddingPx, paddingPx, paddingPx)
-            // Rounded background
             setBackgroundResource(android.R.drawable.dialog_holo_light_frame)
         }
 
@@ -100,7 +99,9 @@ class FloatingBubbleService : Service() {
         var initialY = 0
         var initialTouchX = 0f
         var initialTouchY = 0f
+        var touchDownTime = 0L
         var isDrag = false
+        val touchSlop = android.view.ViewConfiguration.get(this).scaledTouchSlop.coerceAtLeast(30)
 
         floatingBubbleView?.setOnTouchListener { _, event ->
             val params = layoutParams ?: return@setOnTouchListener false
@@ -110,22 +111,31 @@ class FloatingBubbleService : Service() {
                     initialY = params.y
                     initialTouchX = event.rawX
                     initialTouchY = event.rawY
+                    touchDownTime = System.currentTimeMillis()
                     isDrag = false
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
                     val dx = (event.rawX - initialTouchX).toInt()
                     val dy = (event.rawY - initialTouchY).toInt()
-                    if (abs(dx) > 10 || abs(dy) > 10) {
+                    if (abs(dx) > touchSlop || abs(dy) > touchSlop) {
                         isDrag = true
                         params.x = initialX + dx
                         params.y = initialY + dy
-                        windowManager?.updateViewLayout(floatingBubbleView, params)
+                        try {
+                            windowManager?.updateViewLayout(floatingBubbleView, params)
+                        } catch (e: Exception) {
+                            // ignore layout updates during drag
+                        }
                     }
                     true
                 }
                 MotionEvent.ACTION_UP -> {
-                    if (!isDrag) {
+                    val totalDx = abs(event.rawX - initialTouchX)
+                    val totalDy = abs(event.rawY - initialTouchY)
+                    val duration = System.currentTimeMillis() - touchDownTime
+                    // If finger did not drag significantly OR duration was a quick tap (<350ms), trigger click!
+                    if (!isDrag || (totalDx < touchSlop && totalDy < touchSlop) || duration < 350) {
                         onBubbleClicked()
                     }
                     true
@@ -142,15 +152,23 @@ class FloatingBubbleService : Service() {
     }
 
     private fun onBubbleClicked() {
-        // Read copied text from clipboard and open Instant Floating Translation dialog
-        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+        try {
+            floatingBubbleView?.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY)
+        } catch (e: Exception) {
+            // ignore
+        }
+
         var clipboardText: String? = null
-        if (clipboard != null && clipboard.hasPrimaryClip()) {
-            val clipDesc = clipboard.primaryClipDescription
-            if (clipDesc != null && clipDesc.hasMimeType(ClipDescription.MIMETYPE_TEXT_PLAIN)) {
-                val item = clipboard.primaryClip?.getItemAt(0)
-                clipboardText = item?.text?.toString()?.trim()
+        try {
+            val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+            if (clipboard != null && clipboard.hasPrimaryClip()) {
+                val clip = clipboard.primaryClip
+                if (clip != null && clip.itemCount > 0) {
+                    clipboardText = clip.getItemAt(0)?.coerceToText(this)?.toString()?.trim()
+                }
             }
+        } catch (e: Exception) {
+            // Background clipboard access may be restricted on Android 10+; FloatingTranslateActivity will read on focus
         }
 
         val intent = Intent(this, FloatingTranslateActivity::class.java).apply {
@@ -161,7 +179,37 @@ class FloatingBubbleService : Service() {
             }
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
         }
+
+        // Use PendingIntent first (bypasses Android 12-15 background start restrictions)
+        var launched = false
+        try {
+            val pendingIntent = PendingIntent.getActivity(
+                this,
+                (System.currentTimeMillis() % 10000).toInt(),
+                intent,
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+            )
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                val options = android.app.ActivityOptions.makeBasic().apply {
+                    pendingIntentBackgroundActivityStartMode = android.app.ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED
+                }
+                pendingIntent.send(this, 0, null, null, null, null, options.toBundle())
+            } else {
+                pendingIntent.send()
+            }
+            launched = true
+        } catch (e: Exception) {
+            // PendingIntent send failed, fallback below
         }
+
+        if (!launched) {
+            try {
+                startActivity(intent)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -178,9 +226,12 @@ class FloatingBubbleService : Service() {
     }
 
     private fun buildNotification(): Notification {
-        val openAppIntent = Intent(this, MainActivity::class.java)
-        val pendingOpen = PendingIntent.getActivity(
-            this, 0, openAppIntent,
+        val translateIntent = Intent(this, FloatingTranslateActivity::class.java).apply {
+            action = FloatingTranslateActivity.ACTION_TRANSLATE_CLIPBOARD
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        }
+        val pendingTranslate = PendingIntent.getActivity(
+            this, 2, translateIntent,
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
 
@@ -194,9 +245,10 @@ class FloatingBubbleService : Service() {
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("QuickTranslate Instant Assistant")
-            .setContentText("Tap floating bubble anytime to translate WhatsApp messages")
+            .setContentText("Tap floating bubble or 'Translate Now' below")
             .setSmallIcon(R.mipmap.ic_launcher)
-            .setContentIntent(pendingOpen)
+            .setContentIntent(pendingTranslate)
+            .addAction(android.R.drawable.ic_dialog_info, "Translate Now", pendingTranslate)
             .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Turn Off", pendingStop)
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
