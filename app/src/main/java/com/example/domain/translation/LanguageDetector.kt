@@ -8,80 +8,64 @@ object LanguageDetector {
         val trimmed = text.trim()
         if (trimmed.isEmpty()) return Language.ENGLISH
 
-        var arabicScriptCount = 0
+        val totalChars = trimmed.length
+        var arabicCount = 0
         var devanagariCount = 0
-        var hanziCount = 0
-        var hiraganaKatakanaCount = 0
-        var hangulCount = 0
+        var cjkCount = 0
         var cyrillicCount = 0
-        var bengaliCount = 0
-        var latinCount = 0
-
-        var hasUrduSpecificChars = false
-        var hasPersianSpecificChars = false
 
         for (ch in trimmed) {
-            val code = ch.code
+            val block = Character.UnicodeBlock.of(ch)
             when {
-                code in 0x0600..0x06FF || code in 0x0750..0x077F || code in 0x08A0..0x08FF -> {
-                    arabicScriptCount++
-                    // Check for Urdu specific characters: ٹ ڈ ڑ ں ے ھ
-                    if (ch == 'ٹ' || ch == 'ڈ' || ch == 'ڑ' || ch == 'ں' || ch == 'ے' || ch == 'ھ') {
-                        hasUrduSpecificChars = true
-                    }
-                    // Check for Persian specific characters: پ چ ژ گ
-                    if (ch == 'پ' || ch == 'چ' || ch == 'ژ' || ch == 'گ') {
-                        hasPersianSpecificChars = true
-                    }
+                block == Character.UnicodeBlock.ARABIC ||
+                block == Character.UnicodeBlock.ARABIC_PRESENTATION_FORMS_A ||
+                block == Character.UnicodeBlock.ARABIC_PRESENTATION_FORMS_B ||
+                block == Character.UnicodeBlock.ARABIC_SUPPLEMENT -> {
+                    arabicCount++
                 }
-                code in 0x0900..0x097F -> devanagariCount++
-                code in 0x0980..0x09FF -> bengaliCount++
-                code in 0x3040..0x309F || code in 0x30A0..0x30FF -> hiraganaKatakanaCount++
-                code in 0x4E00..0x9FFF -> hanziCount++
-                code in 0xAC00..0xD7AF || code in 0x1100..0x11FF -> hangulCount++
-                code in 0x0400..0x04FF -> cyrillicCount++
-                (code in 'a'.code..'z'.code) || (code in 'A'.code..'Z'.code) ||
-                ch in "áéíóúàèìòùâêîôûäëïöüñçãõşğıçßÁÉÍÓÚÀÈÌÒÙÂÊÎÔÛÄËÏÖÜÑÇÃÕŞĞIÇ" -> latinCount++
+                block == Character.UnicodeBlock.DEVANAGARI -> {
+                    devanagariCount++
+                }
+                block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS ||
+                block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_A ||
+                block == Character.UnicodeBlock.CJK_COMPATIBILITY_IDEOGRAPHS ||
+                block == Character.UnicodeBlock.HIRAGANA ||
+                block == Character.UnicodeBlock.KATAKANA ||
+                block == Character.UnicodeBlock.HANGUL_SYLLABLES -> {
+                    cjkCount++
+                }
+                block == Character.UnicodeBlock.CYRILLIC ||
+                block == Character.UnicodeBlock.CYRILLIC_SUPPLEMENTARY -> {
+                    cyrillicCount++
+                }
             }
         }
 
-        val totalChars = trimmed.length.coerceAtLeast(1)
-
-        // 1. Arabic Script
-        if (arabicScriptCount > 0 && arabicScriptCount >= totalChars / 4) {
-            val lower = trimmed.lowercase()
-            if (hasUrduSpecificChars || lower.contains("آپ") || lower.contains("کیسے") || lower.contains("شکریہ")) {
-                return Language.URDU
-            }
-            if (hasPersianSpecificChars || lower.contains("شما") || lower.contains("چطورید") || lower.contains("ممنون")) {
-                return Language.PERSIAN
-            }
-            return Language.ARABIC
+        // 1. Arabic script (Arabic or Urdu)
+        if (arabicCount > 0 && arabicCount >= totalChars / 4) {
+            val urduSpecificChars = listOf('ٹ', 'ڈ', 'ڑ', 'ں', 'ے', 'ہ', 'ھ', 'چ', 'پ', 'ژ', 'گ')
+            val hasUrduChar = trimmed.any { it in urduSpecificChars }
+            return if (hasUrduChar) Language.URDU else Language.ARABIC
         }
 
-        // 2. Devanagari (Hindi vs Nepali)
+        // 2. Devanagari script (Hindi or Nepali)
         if (devanagariCount > 0 && devanagariCount >= totalChars / 4) {
-            val nepaliKeywords = listOf("कस्तो", "तपाईं", "छौ", "लाई", "गर्छु", "नमस्कार", "धन्यवाद")
-            if (nepaliKeywords.any { trimmed.contains(it) }) {
-                return Language.NEPALI
-            }
-            return Language.HINDI
+            val nepaliMarkers = listOf("छ", "छन्", "थियो", "गर्नुहोस्", "तपाईं", "होला", "भयो")
+            val isNepali = nepaliMarkers.any { trimmed.contains(it) }
+            return if (isNepali) Language.NEPALI else Language.HINDI
         }
 
-        // 3. Bengali
-        if (bengaliCount > 0 && bengaliCount >= totalChars / 4) {
-            return Language.BENGALI
+        // 3. Chinese
+        if (cjkCount > 0 && cjkCount >= totalChars / 4) {
+            return Language.CHINESE
         }
 
-        // 4. Japanese / Chinese / Korean
-        if (hiraganaKatakanaCount > 0) return Language.JAPANESE
-        if (hangulCount > 0) return Language.KOREAN
-        if (hanziCount > 0 && hanziCount >= totalChars / 4) return Language.CHINESE
+        // 4. Cyrillic (Russian)
+        if (cyrillicCount > 0 && cyrillicCount >= totalChars / 4) {
+            return Language.RUSSIAN
+        }
 
-        // 5. Cyrillic (Russian)
-        if (cyrillicCount > 0 && cyrillicCount >= totalChars / 4) return Language.RUSSIAN
-
-        // 6. Latin-based detection
+        // 5. Latin-based detection
         val lowerText = trimmed.lowercase()
         val words = lowerText.split(Regex("[\\s,.;:!?\"'()\\-]+")).filter { it.isNotBlank() }
 
@@ -123,6 +107,21 @@ object LanguageDetector {
         // Italian
         if (words.any { it in listOf("ciao", "grazie", "come", "stai", "buongiorno", "prego", "per", "favore") }) {
             return Language.ITALIAN
+        }
+
+        // Roman Hindi / Hinglish (e.g. "kaise ho", "khana khaya", "aj mujhe ajman jaana hai")
+        val romanHindiWords = listOf(
+            "kaise", "kaisa", "kaisi", "kya", "kaha", "kahan", "khana", "khaya", "kahay",
+            "rahe", "raha", "rahi", "theek", "thik", "accha", "achha", "bhai", "dost",
+            "aap", "tum", "hum", "karo", "kare", "karna", "bolo", "batao", "sun", "chalo",
+            "jaldi", "shukriya", "namaste", "paisa", "kitna", "kitne", "mera", "meri", "mere",
+            "tera", "teri", "tere", "apna", "apni", "apne", "bahut", "bohot", "nahi", "haan",
+            "mujhe", "tujhe", "tumhe", "aapko", "humko", "jaana", "jana", "aana", "dena", "lena",
+            "milna", "hai", "hain", "ho", "hu", "aj", "aaj", "kal", "parso", "ab", "abhi",
+            "kidhar", "idhar", "udhar", "kyu", "kyun", "kuch", "baat", "dekh"
+        )
+        if (words.any { it in romanHindiWords }) {
+            return Language.HINDI
         }
 
         // Default Latin to English
