@@ -38,10 +38,12 @@ class GoogleNeuralTranslationProvider : TranslationProvider {
             )
         }
 
+        val normalizedInput = normalizeRomanizedEntities(cleanInput)
+
         val protectedData = if (isBusinessMode) {
-            BusinessTranslator.protectTokens(cleanInput)
+            BusinessTranslator.protectTokens(normalizedInput)
         } else {
-            ProtectedCommercialText(cleanInput, emptyMap(), emptyList())
+            ProtectedCommercialText(normalizedInput, emptyMap(), emptyList())
         }
 
         val sourceCode = if (sourceLang == Language.AUTO) "auto" else sourceLang.code
@@ -91,9 +93,59 @@ class GoogleNeuralTranslationProvider : TranslationProvider {
                 }
             }
         } catch (e: Exception) {
-            // Network fallback
+            // Network or parsing error, proceed to fallback
         }
 
+        // Secondary Online Fallback: MyMemory API
+        try {
+            val srcParam = if (sourceLang == Language.AUTO) LanguageDetector.detectLanguage(cleanInput).code else sourceLang.code
+            val langPair = "$srcParam|$targetCode"
+            val encodedQuery = URLEncoder.encode(protectedData.maskedText, "UTF-8")
+            val url = "https://api.mymemory.translated.net/get?q=$encodedQuery&langpair=$langPair"
+
+            val request = Request.Builder()
+                .url(url)
+                .header("User-Agent", "QuickTranslateApp/1.0 (Android)")
+                .get()
+                .build()
+
+            val response = client.newCall(request).execute()
+            if (response.isSuccessful) {
+                val bodyString = response.body?.string().orEmpty()
+                val json = org.json.JSONObject(bodyString)
+                val respData = json.optJSONObject("responseData")
+                val translated = respData?.optString("translatedText")
+
+                if (!translated.isNullOrBlank() && !translated.startsWith("MYMEMORY WARNING")) {
+                    val finalTranslation = if (isBusinessMode && protectedData.tokenMap.isNotEmpty()) {
+                        BusinessTranslator.restoreTokens(translated, protectedData.tokenMap)
+                    } else {
+                        translated
+                    }
+
+                    val detectedLang = if (sourceLang == Language.AUTO) {
+                        Language.fromCode(srcParam)
+                    } else {
+                        sourceLang
+                    }
+
+                    return@withContext TranslationResult(
+                        originalText = cleanInput,
+                        translatedText = finalTranslation,
+                        detectedSourceLanguage = detectedLang,
+                        targetLanguage = targetLang,
+                        isDemo = false,
+                        providerName = "Global Neural Network",
+                        isBusinessModeApplied = isBusinessMode && protectedData.extractedEntities.isNotEmpty(),
+                        preservedTokens = protectedData.extractedEntities
+                    )
+                }
+            }
+        } catch (e: Exception) {
+            // Secondary fallback failed
+        }
+
+        // Local Offline phrase matching fallback
         val offlineFallback = MockTranslationProvider()
         offlineFallback.translate(cleanInput, sourceLang, targetLang, isBusinessMode)
     }
@@ -130,6 +182,61 @@ class GoogleNeuralTranslationProvider : TranslationProvider {
             )
         } catch (e: Exception) {
             null
+        }
+    }
+
+    companion object {
+        private val GULF_AND_GLOBAL_PLACES = listOf(
+            "ajman" to "Ajman",
+            "dubai" to "Dubai",
+            "sharjah" to "Sharjah",
+            "abu dhabi" to "Abu Dhabi",
+            "abudhabi" to "Abu Dhabi",
+            "al ain" to "Al Ain",
+            "alain" to "Al Ain",
+            "deira" to "Deira",
+            "bur dubai" to "Bur Dubai",
+            "burdubai" to "Bur Dubai",
+            "fujairah" to "Fujairah",
+            "ras al khaimah" to "Ras Al Khaimah",
+            "rak" to "Ras Al Khaimah",
+            "umm al quwain" to "Umm Al Quwain",
+            "uaq" to "Umm Al Quwain",
+            "jumeirah" to "Jumeirah",
+            "karama" to "Karama",
+            "satwa" to "Satwa",
+            "riyadh" to "Riyadh",
+            "jeddah" to "Jeddah",
+            "dammam" to "Dammam",
+            "khobar" to "Khobar",
+            "mecca" to "Mecca",
+            "makkah" to "Makkah",
+            "medina" to "Medina",
+            "madinah" to "Madinah",
+            "doha" to "Doha",
+            "muscat" to "Muscat",
+            "kuwait" to "Kuwait",
+            "bahrain" to "Bahrain",
+            "manama" to "Manama",
+            "delhi" to "Delhi",
+            "mumbai" to "Mumbai",
+            "karachi" to "Karachi",
+            "lahore" to "Lahore",
+            "islamabad" to "Islamabad",
+            "dhaka" to "Dhaka",
+            "kathmandu" to "Kathmandu"
+        )
+
+        fun normalizeRomanizedEntities(input: String): String {
+            var text = input
+            // 1. Capitalize proper nouns & city names so neural model recognizes named entities
+            for ((query, properName) in GULF_AND_GLOBAL_PLACES) {
+                val pattern = "(?i)\\b${java.util.regex.Pattern.quote(query)}\\b".toRegex()
+                text = text.replace(pattern, properName)
+            }
+            // 2. Normalize informal Hinglish time contractions e.g. standalone "aj" -> "aaj" (today in Hindi/Urdu)
+            text = text.replace("(?i)\\baj\\b".toRegex(), "aaj")
+            return text
         }
     }
 }
