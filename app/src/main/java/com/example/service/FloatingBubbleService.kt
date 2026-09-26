@@ -6,7 +6,6 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
-import android.content.ClipDescription
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
@@ -21,7 +20,6 @@ import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.ImageView
 import androidx.core.app.NotificationCompat
-import com.example.MainActivity
 import com.example.R
 import com.example.ui.screens.FloatingTranslateActivity
 import kotlin.math.abs
@@ -65,6 +63,12 @@ class FloatingBubbleService : Service() {
             WindowManager.LayoutParams.TYPE_PHONE
         }
 
+        val displayMetrics = resources.displayMetrics
+        val screenWidth = displayMetrics.widthPixels
+        val screenHeight = displayMetrics.heightPixels
+        val bubbleSize = (58 * displayMetrics.density).toInt()
+        val edgeMargin = (8 * displayMetrics.density).toInt()
+
         layoutParams = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -74,27 +78,34 @@ class FloatingBubbleService : Service() {
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            x = 30
-            y = 350
+            x = edgeMargin
+            y = (screenHeight * 0.35f).toInt()
         }
 
-        // Create bubble layout programmatically
+        // Circular background with subtle ring (no square white box)
+        val circleBackground = android.graphics.drawable.GradientDrawable().apply {
+            shape = android.graphics.drawable.GradientDrawable.OVAL
+            setColor(0xFF2563EB.toInt())
+            setStroke((2.5f * resources.displayMetrics.density).toInt(), 0xFFFFFFFF.toInt())
+        }
+
         val bubbleContainer = FrameLayout(this).apply {
-            val paddingPx = (10 * resources.displayMetrics.density).toInt()
+            val paddingPx = (6 * resources.displayMetrics.density).toInt()
             setPadding(paddingPx, paddingPx, paddingPx, paddingPx)
-            setBackgroundResource(android.R.drawable.dialog_holo_light_frame)
+            background = circleBackground
+            elevation = 18f
         }
 
         val iconView = ImageView(this).apply {
             val sizePx = (46 * resources.displayMetrics.density).toInt()
             layoutParams = FrameLayout.LayoutParams(sizePx, sizePx)
-            setImageResource(R.mipmap.ic_launcher)
+            setImageResource(R.mipmap.ic_launcher_round)
             contentDescription = "QuickTranslate Floating Bubble"
         }
         bubbleContainer.addView(iconView)
         floatingBubbleView = bubbleContainer
 
-        // Dragging and Tap Handling
+        // Dragging and Magnetic Edge Snap Handling
         var initialX = 0
         var initialY = 0
         var initialTouchX = 0f
@@ -102,6 +113,11 @@ class FloatingBubbleService : Service() {
         var touchDownTime = 0L
         var isDrag = false
         val touchSlop = android.view.ViewConfiguration.get(this).scaledTouchSlop.coerceAtLeast(30)
+
+        val minX = edgeMargin
+        val maxX = (screenWidth - bubbleSize - edgeMargin).coerceAtLeast(minX)
+        val minY = (40 * displayMetrics.density).toInt()
+        val maxY = (screenHeight - bubbleSize - (80 * displayMetrics.density).toInt()).coerceAtLeast(minY)
 
         floatingBubbleView?.setOnTouchListener { _, event ->
             val params = layoutParams ?: return@setOnTouchListener false
@@ -120,8 +136,8 @@ class FloatingBubbleService : Service() {
                     val dy = (event.rawY - initialTouchY).toInt()
                     if (abs(dx) > touchSlop || abs(dy) > touchSlop) {
                         isDrag = true
-                        params.x = initialX + dx
-                        params.y = initialY + dy
+                        params.x = (initialX + dx).coerceIn(minX, maxX)
+                        params.y = (initialY + dy).coerceIn(minY, maxY)
                         try {
                             windowManager?.updateViewLayout(floatingBubbleView, params)
                         } catch (e: Exception) {
@@ -134,10 +150,15 @@ class FloatingBubbleService : Service() {
                     val totalDx = abs(event.rawX - initialTouchX)
                     val totalDy = abs(event.rawY - initialTouchY)
                     val duration = System.currentTimeMillis() - touchDownTime
-                    // If finger did not drag significantly OR duration was a quick tap (<350ms), trigger click!
-                    if (!isDrag || (totalDx < touchSlop && totalDy < touchSlop) || duration < 350) {
+
+                    if (!isDrag || (totalDx < touchSlop && totalDy < touchSlop) || duration < 300) {
                         onBubbleClicked()
                     }
+
+                    // Magnetic snap to closest edge (Left or Right)
+                    val midPoint = screenWidth / 2
+                    val targetX = if (params.x + bubbleSize / 2 < midPoint) minX else maxX
+                    animateBubbleToX(targetX)
                     true
                 }
                 else -> false
@@ -149,6 +170,25 @@ class FloatingBubbleService : Service() {
         } catch (e: Exception) {
             stopSelf()
         }
+    }
+
+    private fun animateBubbleToX(targetX: Int) {
+        val params = layoutParams ?: return
+        val startX = params.x
+        if (startX == targetX) return
+
+        val animator = android.animation.ValueAnimator.ofInt(startX, targetX)
+        animator.duration = 200
+        animator.interpolator = android.view.animation.DecelerateInterpolator()
+        animator.addUpdateListener { va ->
+            params.x = va.animatedValue as Int
+            try {
+                windowManager?.updateViewLayout(floatingBubbleView, params)
+            } catch (e: Exception) {
+                // Ignore layout errors during rapid transitions
+            }
+        }
+        animator.start()
     }
 
     private fun onBubbleClicked() {
