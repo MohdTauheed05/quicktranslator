@@ -1,5 +1,6 @@
 package com.example
 
+import android.Manifest
 import android.content.ClipDescription
 import android.content.ClipboardManager
 import android.content.Context
@@ -7,7 +8,9 @@ import android.content.Intent
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.compose.foundation.layout.fillMaxSize
@@ -67,6 +70,20 @@ class MainActivity : ComponentActivity() {
                 ) {
                     val navController = rememberNavController()
 
+                    val micPermissionLauncher = rememberLauncherForActivityResult(
+                        contract = ActivityResultContracts.RequestPermission()
+                    ) { isGranted ->
+                        if (isGranted) {
+                            Toast.makeText(this@MainActivity, "Microphone enabled for QuickTranslate voice typing!", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+
+                    LaunchedEffect(intent) {
+                        if (intent?.getBooleanExtra("REQUEST_MIC_PERMISSION", false) == true) {
+                            micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                        }
+                    }
+
                     // Handle pending shared text once navController is active
                     LaunchedEffect(pendingSharedText) {
                         val text = pendingSharedText
@@ -113,7 +130,6 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        viewModel.onResumeCheckBubble(this)
         checkClipboardIfEnabled()
     }
 
