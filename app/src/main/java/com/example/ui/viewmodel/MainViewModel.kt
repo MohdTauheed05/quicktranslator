@@ -1,5 +1,6 @@
 package com.example.ui.viewmodel
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -51,6 +52,10 @@ class MainViewModel(
             initialValue = emptyList()
         )
 
+    // Aliases for screen compatibility (FavoritesScreen and HistoryScreen)
+    val favoritesList: StateFlow<List<FavoriteEntity>> = favorites
+    val historyList: StateFlow<List<TranslationHistoryEntity>> = history
+
     val isSpeaking: StateFlow<Boolean> = ttsManager.isSpeaking
 
     private val _inputText = MutableStateFlow("")
@@ -74,9 +79,33 @@ class MainViewModel(
     private val _toastEvent = MutableSharedFlow<String>()
     val toastEvent: SharedFlow<String> = _toastEvent.asSharedFlow()
 
+    private val _showOverlayPermissionDialog = MutableStateFlow(false)
+    val showOverlayPermissionDialog: StateFlow<Boolean> = _showOverlayPermissionDialog.asStateFlow()
+
     fun updateInputText(text: String) {
         _inputText.value = text
         if (_errorMessage.value != null) _errorMessage.value = null
+    }
+
+    fun processSharedText(text: String) {
+        _inputText.value = text
+        translate(text)
+    }
+
+    fun onResumeCheckBubble(context: Context) {
+        // Pure keyboard companion mode
+    }
+
+    fun toggleFloatingBubble(context: Context) {
+        // Pure keyboard mode
+    }
+
+    fun dismissOverlayPermissionDialog() {
+        _showOverlayPermissionDialog.value = false
+    }
+
+    fun requestOverlayPermission(context: Context) {
+        _showOverlayPermissionDialog.value = false
     }
 
     fun setSourceLanguage(language: Language) {
@@ -128,6 +157,7 @@ class MainViewModel(
                 )
                 _currentResult.value = result
                 _isSavedCurrent.value = true
+                _isCurrentFavorite.value = translationRepository.isFavorite(result.originalText, result.targetLanguage.code)
             } catch (e: Exception) {
                 _errorMessage.value = "Translation error: ${e.localizedMessage ?: "Unknown error"}"
             } finally {
@@ -142,6 +172,10 @@ class MainViewModel(
         _errorMessage.value = null
     }
 
+    fun speak(text: String, language: Language) {
+        ttsManager.speak(text, language)
+    }
+
     fun speakText(text: String, language: Language) {
         ttsManager.speak(text, language)
     }
@@ -150,16 +184,33 @@ class MainViewModel(
         ttsManager.stop()
     }
 
+    fun toggleCurrentFavorite() {
+        val result = _currentResult.value ?: return
+        toggleFavorite(result)
+    }
+
     fun toggleFavorite(result: TranslationResult) {
         viewModelScope.launch {
-            val newFavStatus = !_isCurrentFavorite.value
-            _isCurrentFavorite.value = newFavStatus
-            if (newFavStatus) {
-                translationRepository.saveFavorite(result)
-                _toastEvent.emit("Added to Favorites")
-            } else {
-                translationRepository.removeFavoriteByText(result.originalText)
-                _toastEvent.emit("Removed from Favorites")
+            val nowFav = translationRepository.toggleFavorite(
+                sourceLang = result.detectedSourceLanguage,
+                originalText = result.originalText,
+                targetLang = result.targetLanguage,
+                translatedText = result.translatedText
+            )
+            _isCurrentFavorite.value = nowFav
+            _toastEvent.emit(if (nowFav) "Added to Favorites" else "Removed from Favorites")
+        }
+    }
+
+    fun saveCurrentTranslation() {
+        val result = _currentResult.value ?: return
+        viewModelScope.launch {
+            try {
+                translationRepository.saveToHistory(result)
+                _isSavedCurrent.value = true
+                _toastEvent.emit("Translation saved to history")
+            } catch (e: Exception) {
+                _toastEvent.emit("Failed to save translation")
             }
         }
     }
@@ -211,6 +262,13 @@ class MainViewModel(
         viewModelScope.launch {
             translationRepository.clearFavorites()
             _toastEvent.emit("All favorites cleared")
+        }
+    }
+
+    fun deleteAllUserData() {
+        viewModelScope.launch {
+            translationRepository.deleteAllUserData()
+            _toastEvent.emit("All user data cleared")
         }
     }
 
