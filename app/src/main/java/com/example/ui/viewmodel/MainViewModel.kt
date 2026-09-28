@@ -1,10 +1,5 @@
 package com.example.ui.viewmodel
 
-import android.content.Context
-import android.content.Intent
-import android.net.Uri
-import android.os.Build
-import android.provider.Settings
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -17,7 +12,6 @@ import com.example.data.repository.UserPreferencesRepository
 import com.example.domain.model.Language
 import com.example.domain.model.TranslationResult
 import com.example.domain.tts.TtsManager
-import com.example.service.FloatingBubbleService
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -43,11 +37,19 @@ class MainViewModel(
     val themeMode = userPreferences.themeMode
     val hasCompletedOnboarding = userPreferences.hasCompletedOnboarding
 
-    val historyList: StateFlow<List<TranslationHistoryEntity>> = translationRepository.allHistory
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    val history: StateFlow<List<TranslationHistoryEntity>> =
+        translationRepository.allHistory.stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = emptyList()
+        )
 
-    val favoritesList: StateFlow<List<FavoriteEntity>> = translationRepository.allFavorites
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    val favorites: StateFlow<List<FavoriteEntity>> =
+        translationRepository.allFavorites.stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = emptyList()
+        )
 
     val isSpeaking: StateFlow<Boolean> = ttsManager.isSpeaking
 
@@ -72,9 +74,6 @@ class MainViewModel(
     private val _toastEvent = MutableSharedFlow<String>()
     val toastEvent: SharedFlow<String> = _toastEvent.asSharedFlow()
 
-    private val _showOverlayPermissionDialog = MutableStateFlow(false)
-    val showOverlayPermissionDialog: StateFlow<Boolean> = _showOverlayPermissionDialog.asStateFlow()
-
     fun updateInputText(text: String) {
         _inputText.value = text
         if (_errorMessage.value != null) _errorMessage.value = null
@@ -98,90 +97,71 @@ class MainViewModel(
         val currentSource = sourceLanguage.value
         val currentTarget = targetLanguage.value
         if (currentSource == Language.AUTO) {
-            val detected = _currentResult.value?.detectedSourceLanguage ?: Language.ENGLISH
             userPreferences.setSourceLanguage(currentTarget)
-            userPreferences.setTargetLanguage(detected)
+            userPreferences.setTargetLanguage(Language.ENGLISH)
         } else {
             userPreferences.setSourceLanguage(currentTarget)
             userPreferences.setTargetLanguage(currentSource)
         }
-
-        val result = _currentResult.value
-        if (result != null && result.translatedText.isNotBlank()) {
-            _inputText.value = result.translatedText
-            translate(result.translatedText)
+        val currentResult = _currentResult.value
+        if (currentResult != null && currentResult.translatedText.isNotBlank()) {
+            _inputText.value = currentResult.translatedText
+            translate(currentResult.translatedText)
         }
     }
 
-    fun translate(textToTranslate: String? = null) {
-        val text = (textToTranslate ?: _inputText.value).trim()
-        if (text.isBlank()) {
-            _errorMessage.value = "Please enter or paste text to translate."
-            return
-        }
-
-        _inputText.value = text
-        _isLoading.value = true
-        _errorMessage.value = null
-        _isSavedCurrent.value = false
+    fun translate(text: String) {
+        val clean = text.trim()
+        if (clean.isEmpty()) return
 
         viewModelScope.launch {
+            _isLoading.value = true
+            _errorMessage.value = null
+            _isSavedCurrent.value = false
+            _isCurrentFavorite.value = false
+
             try {
                 val result = translationRepository.translate(
-                    text = text,
+                    text = clean,
                     sourceLang = sourceLanguage.value,
                     targetLang = targetLanguage.value
                 )
                 _currentResult.value = result
-                _isCurrentFavorite.value = translationRepository.isFavorite(
-                    result.originalText,
-                    result.targetLanguage.code
-                )
+                _isSavedCurrent.value = true
             } catch (e: Exception) {
-                _errorMessage.value = "Translation failed. Please try again."
+                _errorMessage.value = "Translation error: ${e.localizedMessage ?: "Unknown error"}"
             } finally {
                 _isLoading.value = false
             }
         }
     }
 
-    fun processSharedText(sharedText: String) {
-        if (sharedText.isNotBlank()) {
-            _inputText.value = sharedText
-            translate(sharedText)
-        }
+    fun clearInput() {
+        _inputText.value = ""
+        _currentResult.value = null
+        _errorMessage.value = null
     }
 
-    fun saveCurrentTranslation() {
-        val result = _currentResult.value ?: return
-        viewModelScope.launch {
-            translationRepository.saveToHistory(result)
-            _isSavedCurrent.value = true
-            _toastEvent.emit("Saved to History")
-        }
-    }
-
-    fun toggleCurrentFavorite() {
-        val result = _currentResult.value ?: return
-        viewModelScope.launch {
-            val nowFav = translationRepository.toggleFavorite(
-                sourceLang = result.detectedSourceLanguage,
-                originalText = result.originalText,
-                targetLang = result.targetLanguage,
-                translatedText = result.translatedText,
-                category = if (result.isBusinessModeApplied) "Business" else "General"
-            )
-            _isCurrentFavorite.value = nowFav
-            _toastEvent.emit(if (nowFav) "Added to Favorites" else "Removed from Favorites")
-        }
-    }
-
-    fun speak(text: String, language: Language) {
+    fun speakText(text: String, language: Language) {
         ttsManager.speak(text, language)
     }
 
     fun stopSpeaking() {
         ttsManager.stop()
+    }
+
+    fun toggleFavorite(result: TranslationResult) {
+        viewModelScope.launch {
+            val newFavStatus = !_isCurrentFavorite.value
+            _isCurrentFavorite.value = newFavStatus
+            if (newFavStatus) {
+                translationRepository.saveFavorite(result)
+                _toastEvent.emit("Added to Favorites")
+            } else {
+                translationRepository.removeFavoriteByText(result.originalText)
+                _toastEvent.emit("Removed from Favorites")
+            }
+        }
     }
 
     fun toggleBusinessMode() {
@@ -195,53 +175,6 @@ class MainViewModel(
     fun toggleAutoClipboard() {
         val current = autoClipboardEnabled.value
         userPreferences.setAutoClipboardEnabled(!current)
-    }
-
-    fun toggleFloatingBubble(context: Context) {
-        val isCurrentlyEnabled = floatingBubbleEnabled.value
-        if (isCurrentlyEnabled) {
-            // Turn off
-            FloatingBubbleService.stop(context)
-            userPreferences.setFloatingBubbleEnabled(false)
-            viewModelScope.launch { _toastEvent.emit("Floating Bubble disabled") }
-        } else {
-            // Check permission to draw over other apps
-            if (Settings.canDrawOverlays(context)) {
-                FloatingBubbleService.start(context)
-                userPreferences.setFloatingBubbleEnabled(true)
-                viewModelScope.launch { _toastEvent.emit("Floating Assistant activated! Look for the bubble over WhatsApp") }
-            } else {
-                _showOverlayPermissionDialog.value = true
-            }
-        }
-    }
-
-    fun dismissOverlayPermissionDialog() {
-        _showOverlayPermissionDialog.value = false
-    }
-
-    fun requestOverlayPermission(context: Context) {
-        _showOverlayPermissionDialog.value = false
-        try {
-            val intent = Intent(
-                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                Uri.parse("package:${context.packageName}")
-            ).apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            }
-            context.startActivity(intent)
-        } catch (e: Exception) {
-            val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION).apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            }
-            context.startActivity(intent)
-        }
-    }
-
-    fun onResumeCheckBubble(context: Context) {
-        if (floatingBubbleEnabled.value && Settings.canDrawOverlays(context)) {
-            FloatingBubbleService.start(context)
-        }
     }
 
     fun setThemeMode(mode: ThemeMode) {
@@ -279,20 +212,6 @@ class MainViewModel(
             translationRepository.clearFavorites()
             _toastEvent.emit("All favorites cleared")
         }
-    }
-
-    fun deleteAllUserData() {
-        viewModelScope.launch {
-            translationRepository.deleteAllUserData()
-            _inputText.value = ""
-            _currentResult.value = null
-            _toastEvent.emit("All data permanently deleted")
-        }
-    }
-
-    override fun onCleared() {
-        super.onCleared()
-        ttsManager.stop()
     }
 
     class Factory(
