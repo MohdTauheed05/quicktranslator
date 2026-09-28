@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -27,11 +28,21 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Help
 import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.AutoFixHigh
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.ContentPaste
+import androidx.compose.material.icons.filled.FlashOn
 import androidx.compose.material.icons.filled.Keyboard
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Spellcheck
+import androidx.compose.material.icons.filled.SwapHoriz
+import androidx.compose.material.icons.filled.Translate
+import com.example.domain.ai.AiAssistantEngine
+import com.example.domain.ai.AiTone
+import kotlinx.coroutines.launch
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -53,6 +64,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -78,10 +90,15 @@ fun HomeScreen(
 ) {
     val context = LocalContext.current
     val targetLang by viewModel.targetLanguage.collectAsStateWithLifecycle()
+    val sourceLang by viewModel.sourceLanguage.collectAsStateWithLifecycle()
     val isBusinessMode by viewModel.businessModeEnabled.collectAsStateWithLifecycle()
 
     var showTargetPicker by remember { mutableStateOf(false) }
     var testTextInput by remember { mutableStateOf("") }
+    val coroutineScope = rememberCoroutineScope()
+    var aiTestInput by remember { mutableStateOf("hello sir shipment is delayed will send invoice tommorow") }
+    var aiRewrittenOutput by remember { mutableStateOf<String?>(null) }
+    var isAiLoading by remember { mutableStateOf(false) }
 
     val imm = remember { context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager }
 
@@ -206,6 +223,7 @@ fun HomeScreen(
 
                     Spacer(modifier = Modifier.height(14.dp))
 
+                    // Step 1: Enable in Settings
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically
@@ -243,6 +261,7 @@ fun HomeScreen(
 
                     Spacer(modifier = Modifier.height(10.dp))
 
+                    // Step 2: Switch / Select Active
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically
@@ -381,6 +400,162 @@ fun HomeScreen(
 
             Spacer(modifier = Modifier.height(16.dp))
 
+            // GEMINI AI WRITING & TONE STUDIO
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(20.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = Color(0xFF261D33)
+                )
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(imageVector = Icons.Default.AutoFixHigh, contentDescription = null, tint = Color(0xFFCE93D8), modifier = Modifier.size(20.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "Gemini AI Writing & Tone Studio",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White
+                            )
+                        }
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = Color(0xFFAB47BC).copy(alpha = 0.3f)
+                        ) {
+                            Text(
+                                text = "AI Powered",
+                                color = Color(0xFFE1BEE7),
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 10.sp,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Text(
+                        text = "Transform any rough draft into professional business communication, casual chat, or perfect grammar before sending in WhatsApp:",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color(0xFFE1BEE7).copy(alpha = 0.8f)
+                    )
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    OutlinedTextField(
+                        value = aiTestInput,
+                        onValueChange = { aiTestInput = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        placeholder = { Text("Enter message to rewrite with AI...", color = Color.Gray) },
+                        shape = RoundedCornerShape(12.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedContainerColor = Color(0xFF1B1424),
+                            unfocusedContainerColor = Color(0xFF1B1424),
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White
+                        ),
+                        minLines = 2,
+                        maxLines = 3
+                    )
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    Text(
+                        text = "Choose AI Tone:",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color(0xFFCE93D8),
+                        fontWeight = FontWeight.Bold
+                    )
+
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        AiTone.entries.forEach { tone ->
+                            Button(
+                                onClick = {
+                                    if (aiTestInput.isNotBlank()) {
+                                        isAiLoading = true
+                                        coroutineScope.launch {
+                                            val result = AiAssistantEngine.rewrite(aiTestInput, tone, targetLang)
+                                            aiRewrittenOutput = result
+                                            isAiLoading = false
+                                        }
+                                    }
+                                },
+                                shape = RoundedCornerShape(10.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4A2A6B))
+                            ) {
+                                Text("${tone.iconLabel} ${tone.title}", fontSize = 12.sp, color = Color.White)
+                            }
+                        }
+                    }
+
+                    if (isAiLoading) {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            androidx.compose.material3.CircularProgressIndicator(
+                                modifier = Modifier.size(16.dp),
+                                color = Color(0xFFCE93D8),
+                                strokeWidth = 2.dp
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Gemini is polishing your text...", color = Color(0xFFCE93D8), fontSize = 12.sp)
+                        }
+                    } else if (!aiRewrittenOutput.isNullOrBlank()) {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = Color(0xFF1B1424),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "AI Result (Ready to send):",
+                                        color = Color(0xFF81C784),
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Button(
+                                        onClick = {
+                                            copyToClipboard(aiRewrittenOutput!!, "AI Rewrite")
+                                        },
+                                        shape = RoundedCornerShape(8.dp),
+                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF81C784))
+                                    ) {
+                                        Text("Copy 📋", color = Color(0xFF1B1424), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                }
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Text(
+                                    text = aiRewrittenOutput!!,
+                                    color = Color.White,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Medium
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
             // 3. KEYBOARD SETTINGS & PREFERENCES
             Card(
                 modifier = Modifier.fillMaxWidth(),
@@ -398,6 +573,7 @@ fun HomeScreen(
 
                     Spacer(modifier = Modifier.height(12.dp))
 
+                    // Target Language Row
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -438,6 +614,7 @@ fun HomeScreen(
 
                     Spacer(modifier = Modifier.height(10.dp))
 
+                    // Trade & Brand Names Protection
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
