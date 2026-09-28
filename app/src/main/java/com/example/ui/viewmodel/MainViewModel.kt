@@ -34,6 +34,7 @@ class MainViewModel(
     val sourceLanguage = userPreferences.sourceLanguage
     val businessModeEnabled = userPreferences.businessModeEnabled
     val autoClipboardEnabled = userPreferences.autoClipboardEnabled
+    val autoCorrectionEnabled = userPreferences.autoCorrectionEnabled
     val floatingBubbleEnabled = userPreferences.floatingBubbleEnabled
     val themeMode = userPreferences.themeMode
     val hasCompletedOnboarding = userPreferences.hasCompletedOnboarding
@@ -226,6 +227,11 @@ class MainViewModel(
     fun toggleAutoClipboard() {
         val current = autoClipboardEnabled.value
         userPreferences.setAutoClipboardEnabled(!current)
+    }
+
+    fun toggleAutoCorrection() {
+        val current = autoCorrectionEnabled.value
+        userPreferences.setAutoCorrectionEnabled(!current)
     }
 
     fun setThemeMode(mode: ThemeMode) {
