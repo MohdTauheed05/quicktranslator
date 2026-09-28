@@ -1,8 +1,10 @@
 package com.example.keyboard
 
+import android.Manifest
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.inputmethodservice.InputMethodService
 import android.os.Bundle
 import android.os.Handler
@@ -24,6 +26,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.ViewCompositionStrategy
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.LifecycleRegistry
@@ -35,7 +38,10 @@ import androidx.savedstate.SavedStateRegistry
 import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
+import com.example.MainActivity
 import com.example.QuickTranslateApp
+import com.example.domain.ai.AiAssistantEngine
+import com.example.domain.ai.AiTone
 import com.example.domain.model.Language
 import com.example.domain.translation.SpeechCorrector
 import kotlinx.coroutines.CoroutineScope
@@ -58,15 +64,13 @@ class QuickTranslateKeyboardService : InputMethodService(), LifecycleOwner, View
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var liveTranslateJob: Job? = null
-    private var clipboardTranslateJob: Job? = null
 
-    private val app by lazy { applicationContext as QuickTranslateApp }
-    private val translationRepo by lazy { app.translationRepository }
-    private val userPrefs by lazy { app.userPreferences }
+    private val translationRepo by lazy { (application as QuickTranslateApp).translationRepository }
+    private val userPrefs by lazy { (application as QuickTranslateApp).userPreferences }
 
-    // Keyboard State Holders
-    private var sourceLang by mutableStateOf(Language.AUTO)
     private var targetLang by mutableStateOf(Language.ENGLISH)
+    private var sourceLang by mutableStateOf(Language.AUTO)
+
     private var copiedOriginalText by mutableStateOf<String?>(null)
     private var copiedTranslatedText by mutableStateOf<String?>(null)
     private var isTranslatingCopied by mutableStateOf(false)
@@ -77,6 +81,19 @@ class QuickTranslateKeyboardService : InputMethodService(), LifecycleOwner, View
     private var isLiveTranslating by mutableStateOf(false)
     private var isLiveModeEnabled by mutableStateOf(false)
 
+    // Smart Auto-Correction & Suggestions
+    private var autoCorrectionEnabled by mutableStateOf(true)
+    private var currentWord by mutableStateOf("")
+    private var suggestions by mutableStateOf<List<String>>(emptyList())
+    private var lastAutoCorrectedFrom: String? = null
+    private var lastAutoCorrectedTo: String? = null
+
+    // Gemini AI Assistant & Tones
+    private var showAiMenu by mutableStateOf(false)
+    private var isAiGenerating by mutableStateOf(false)
+    private var aiSmartReplies by mutableStateOf<List<String>>(emptyList())
+
+    // Voice Dictation
     private var isListeningVoice by mutableStateOf(false)
     private var voiceStatusText by mutableStateOf<String?>(null)
     private var speechRecognizer: SpeechRecognizer? = null
@@ -102,6 +119,9 @@ class QuickTranslateKeyboardService : InputMethodService(), LifecycleOwner, View
         }
         serviceScope.launch {
             userPrefs.sourceLanguage.collect { sourceLang = it }
+        }
+        serviceScope.launch {
+            userPrefs.autoCorrectionEnabled.collect { autoCorrectionEnabled = it }
         }
     }
 
@@ -167,6 +187,10 @@ class QuickTranslateKeyboardService : InputMethodService(), LifecycleOwner, View
                         isShifted = isShifted,
                         isCapsLock = isCapsLock,
                         showLanguagePickerFor = showLanguagePickerFor,
+                        suggestions = suggestions,
+                        showAiMenu = showAiMenu,
+                        isAiGenerating = isAiGenerating,
+                        aiSmartReplies = aiSmartReplies,
                         onKeyClick = { handleKeyClick(it) },
                         onBackspace = { handleBackspace() },
                         onEnter = { handleEnter() },
@@ -189,7 +213,11 @@ class QuickTranslateKeyboardService : InputMethodService(), LifecycleOwner, View
                         },
                         onVoiceClick = { toggleVoiceInput() },
                         onPasteClipboard = { handlePasteClipboard() },
-                        onSwitchIme = { handleSwitchInputMethod() }
+                        onSwitchIme = { handleSwitchInputMethod() },
+                        onSelectSuggestion = { handleSelectSuggestion(it) },
+                        onToggleAiMenu = { showAiMenu = !showAiMenu },
+                        onApplyAiTone = { handleApplyAiTone(it) },
+                        onApplySmartReply = { handleApplySmartReply(it) }
                     )
                 }
             }
@@ -212,52 +240,63 @@ class QuickTranslateKeyboardService : InputMethodService(), LifecycleOwner, View
 
         liveTypedText = ""
         liveTranslatedText = null
+        currentWord = ""
+        suggestions = emptyList()
         showLanguagePickerFor = null
+        showAiMenu = false
 
         checkClipboardForTranslation()
     }
 
-    override fun onWindowShown() {
-        super.onWindowShown()
-        window?.window?.decorView?.let { decor ->
-            try {
-                decor.setViewTreeLifecycleOwner(this)
-                decor.setViewTreeViewModelStoreOwner(this)
-                decor.setViewTreeSavedStateRegistryOwner(this)
-            } catch (e: Exception) {}
-        }
-        if (lifecycleRegistry.currentState != Lifecycle.State.RESUMED) {
-            lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
-        }
-        checkClipboardForTranslation()
-    }
-
-    override fun onWindowHidden() {
-        super.onWindowHidden()
-        lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_PAUSE)
+    override fun onFinishInputView(finishingInput: Boolean) {
+        super.onFinishInputView(finishingInput)
         stopVoiceInput()
+        liveTranslateJob?.cancel()
+        currentWord = ""
+        suggestions = emptyList()
+        showAiMenu = false
+        if (lifecycleRegistry.currentState == Lifecycle.State.RESUMED) {
+            lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_PAUSE)
+        }
     }
 
-    private fun handleSwitchInputMethod() {
-        try {
-            val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
-            imm?.showInputMethodPicker()
-        } catch (e: Exception) {
-            e.printStackTrace()
+    override fun onDestroy() {
+        super.onDestroy()
+        stopVoiceInput()
+        serviceScope.cancel()
+        store.clear()
+        if (lifecycleRegistry.currentState >= Lifecycle.State.INITIALIZED) {
+            lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
         }
     }
 
     private fun checkClipboardForTranslation() {
+        if (!userPrefs.autoClipboardEnabled.value) return
+
         try {
             val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager ?: return
             if (!clipboard.hasPrimaryClip()) return
-            val clip = clipboard.primaryClip ?: return
-            if (clip.itemCount == 0) return
-            val raw = clip.getItemAt(0)?.coerceToText(this)?.toString()?.trim()
 
-            if (!raw.isNullOrBlank() && raw != lastCheckedClipboard) {
-                lastCheckedClipboard = raw
-                translateCopiedText(raw)
+            val clipItem = clipboard.primaryClip?.getItemAt(0)
+            val clipText = clipItem?.coerceToText(this)?.toString()?.trim() ?: return
+
+            if (clipText.isEmpty() || clipText == lastCheckedClipboard) return
+            lastCheckedClipboard = clipText
+
+            if (clipText.length > 500) return
+
+            translateCopiedText(clipText)
+
+            // Pre-generate AI Smart Replies for copied WhatsApp message
+            serviceScope.launch(Dispatchers.IO) {
+                try {
+                    val replies = AiAssistantEngine.generateSmartReplies(clipText)
+                    serviceScope.launch(Dispatchers.Main) {
+                        aiSmartReplies = replies
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
             }
         } catch (e: Exception) {
             e.printStackTrace()
@@ -265,17 +304,18 @@ class QuickTranslateKeyboardService : InputMethodService(), LifecycleOwner, View
     }
 
     private fun translateCopiedText(text: String) {
-        clipboardTranslateJob?.cancel()
-        clipboardTranslateJob = serviceScope.launch(Dispatchers.IO) {
-            isTranslatingCopied = true
-            copiedOriginalText = text
+        copiedOriginalText = text
+        copiedTranslatedText = null
+        isTranslatingCopied = true
+
+        serviceScope.launch(Dispatchers.IO) {
             try {
                 val targetToUse = if (targetLang == Language.AUTO) Language.ENGLISH else targetLang
                 val result = translationRepo.translate(
                     text = text,
                     sourceLang = sourceLang,
                     targetLang = targetToUse,
-                    forceBusinessMode = false
+                    forceBusinessMode = userPrefs.businessModeEnabled.value
                 )
                 if (result.translatedText.isNotBlank()) {
                     copiedTranslatedText = result.translatedText
@@ -295,14 +335,60 @@ class QuickTranslateKeyboardService : InputMethodService(), LifecycleOwner, View
             isShifted = false
         }
 
+        // Auto-correction & suggestions tracking
+        if (char.length == 1 && (char[0].isLetter() || char[0].isDigit())) {
+            currentWord += char
+            lastAutoCorrectedFrom = null
+            lastAutoCorrectedTo = null
+            suggestions = if (autoCorrectionEnabled) {
+                AutoCorrectionEngine.getSuggestions(currentWord)
+            } else {
+                emptyList()
+            }
+        } else {
+            currentWord = ""
+            suggestions = emptyList()
+        }
+
         if (isLiveModeEnabled) {
             liveTypedText += char
             triggerLiveTranslation(liveTypedText)
         }
     }
 
+    private fun handleSelectSuggestion(suggestion: String) {
+        val wordLen = currentWord.length
+        if (wordLen > 0) {
+            currentInputConnection?.deleteSurroundingText(wordLen, 0)
+        }
+        currentInputConnection?.commitText(suggestion + " ", 1)
+        currentWord = ""
+        suggestions = emptyList()
+    }
+
     private fun handleBackspace() {
+        // If user presses backspace immediately after an auto-correction, undo it back to literal typed word!
+        if (lastAutoCorrectedTo != null && lastAutoCorrectedFrom != null) {
+            val toLen = lastAutoCorrectedTo!!.length + 1 // including the trailing space
+            currentInputConnection?.deleteSurroundingText(toLen, 0)
+            currentInputConnection?.commitText(lastAutoCorrectedFrom!!, 1)
+            currentWord = lastAutoCorrectedFrom!!
+            lastAutoCorrectedFrom = null
+            lastAutoCorrectedTo = null
+            suggestions = if (autoCorrectionEnabled) AutoCorrectionEngine.getSuggestions(currentWord) else emptyList()
+            return
+        }
+
         currentInputConnection?.deleteSurroundingText(1, 0)
+        if (currentWord.isNotEmpty()) {
+            currentWord = currentWord.dropLast(1)
+            suggestions = if (autoCorrectionEnabled && currentWord.isNotEmpty()) {
+                AutoCorrectionEngine.getSuggestions(currentWord)
+            } else {
+                emptyList()
+            }
+        }
+
         if (isLiveModeEnabled && liveTypedText.isNotEmpty()) {
             liveTypedText = liveTypedText.dropLast(1)
             if (liveTypedText.isNotEmpty()) {
@@ -314,7 +400,21 @@ class QuickTranslateKeyboardService : InputMethodService(), LifecycleOwner, View
     }
 
     private fun handleSpace() {
+        // Check for Auto-Correction on space
+        if (autoCorrectionEnabled && currentWord.isNotBlank()) {
+            val correction = AutoCorrectionEngine.getAutoCorrectionForSpace(currentWord)
+            if (correction != null && correction != currentWord) {
+                currentInputConnection?.deleteSurroundingText(currentWord.length, 0)
+                currentInputConnection?.commitText(correction, 1)
+                lastAutoCorrectedFrom = currentWord
+                lastAutoCorrectedTo = correction
+            }
+        }
+
         currentInputConnection?.commitText(" ", 1)
+        currentWord = ""
+        suggestions = emptyList()
+
         if (isLiveModeEnabled) {
             liveTypedText += " "
             triggerLiveTranslation(liveTypedText)
@@ -339,6 +439,8 @@ class QuickTranslateKeyboardService : InputMethodService(), LifecycleOwner, View
         }
         liveTypedText = ""
         liveTranslatedText = null
+        currentWord = ""
+        suggestions = emptyList()
     }
 
     private fun handleShiftClick() {
@@ -415,6 +517,47 @@ class QuickTranslateKeyboardService : InputMethodService(), LifecycleOwner, View
         }
     }
 
+    private fun handleApplyAiTone(tone: AiTone) {
+        isAiGenerating = true
+        serviceScope.launch(Dispatchers.IO) {
+            try {
+                // Determine text to rewrite: either live typed text, copied text, or text before cursor
+                val textToRewrite = if (liveTypedText.isNotBlank()) {
+                    liveTypedText
+                } else if (!copiedOriginalText.isNullOrBlank()) {
+                    copiedOriginalText!!
+                } else {
+                    currentInputConnection?.getTextBeforeCursor(200, 0)?.toString()?.trim() ?: ""
+                }
+
+                if (textToRewrite.isNotBlank()) {
+                    val rewritten = AiAssistantEngine.rewrite(textToRewrite, tone, targetLang)
+                    serviceScope.launch(Dispatchers.Main) {
+                        if (rewritten.isNotBlank()) {
+                            if (liveTypedText.isNotBlank()) {
+                                currentInputConnection?.deleteSurroundingText(liveTypedText.length, 0)
+                                liveTypedText = ""
+                            }
+                            currentInputConnection?.commitText(rewritten, 1)
+                            showAiMenu = false
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            } finally {
+                serviceScope.launch(Dispatchers.Main) {
+                    isAiGenerating = false
+                }
+            }
+        }
+    }
+
+    private fun handleApplySmartReply(reply: String) {
+        currentInputConnection?.commitText(reply + " ", 1)
+        showAiMenu = false
+    }
+
     private fun triggerLiveTranslation(text: String) {
         liveTranslateJob?.cancel()
         if (text.isBlank()) {
@@ -450,77 +593,124 @@ class QuickTranslateKeyboardService : InputMethodService(), LifecycleOwner, View
     }
 
     private fun startVoiceInput() {
+        // 1. Check RECORD_AUDIO runtime permission
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            voiceStatusText = "Microphone permission required - tap to allow"
+            mainHandler.postDelayed({ voiceStatusText = null }, 3500)
+            try {
+                val intent = Intent(this, MainActivity::class.java).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                    putExtra("REQUEST_MIC_PERMISSION", true)
+                }
+                startActivity(intent)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+            return
+        }
+
+        // 2. Check if SpeechRecognizer service is available on device
         if (!SpeechRecognizer.isRecognitionAvailable(this)) {
-            voiceStatusText = "Speech recognition unavailable"
+            voiceStatusText = "Opening voice recognition..."
             mainHandler.postDelayed({ voiceStatusText = null }, 2000)
+            try {
+                val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                    putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                    putExtra(RecognizerIntent.EXTRA_PROMPT, "Speak to translate with QuickTranslate")
+                }
+                startActivity(intent)
+            } catch (e: Exception) {
+                voiceStatusText = "Voice input unavailable on this device"
+            }
             return
         }
 
         try {
             stopVoiceInput()
-            speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this).apply {
-                setRecognitionListener(object : RecognitionListener {
-                    override fun onReadyForSpeech(params: Bundle?) {
-                        isListeningVoice = true
-                        voiceStatusText = "Listening... speak now"
-                    }
+            isListeningVoice = true
+            voiceStatusText = "Listening... speak now"
 
-                    override fun onBeginningOfSpeech() {
-                        voiceStatusText = "Hearing voice..."
-                    }
-
-                    override fun onRmsChanged(rmsdB: Float) {}
-                    override fun onBufferReceived(buffer: ByteArray?) {}
-                    override fun onEndOfSpeech() {
-                        voiceStatusText = "Translating speech..."
-                    }
-
-                    override fun onError(error: Int) {
-                        isListeningVoice = false
-                        voiceStatusText = "Speech ended"
-                        mainHandler.postDelayed({ voiceStatusText = null }, 1500)
-                    }
-
-                    override fun onResults(results: Bundle?) {
-                        isListeningVoice = false
-                        val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION) ?: arrayListOf()
-                        val (bestSpoken, _) = SpeechCorrector.processSpeechResults(matches)
-
-                        if (bestSpoken.isNotBlank()) {
-                            serviceScope.launch(Dispatchers.IO) {
-                                val targetToUse = if (targetLang == Language.AUTO) Language.ENGLISH else targetLang
-                                val trans = translationRepo.translate(
-                                    text = bestSpoken,
-                                    sourceLang = sourceLang,
-                                    targetLang = targetToUse,
-                                    forceBusinessMode = false
-                                )
-                                val textToCommit = if (trans.translatedText.isNotBlank()) trans.translatedText else bestSpoken
-                                serviceScope.launch(Dispatchers.Main) {
-                                    currentInputConnection?.commitText(textToCommit, 1)
-                                }
+            mainHandler.post {
+                try {
+                    speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this).apply {
+                        setRecognitionListener(object : RecognitionListener {
+                            override fun onReadyForSpeech(params: Bundle?) {
+                                isListeningVoice = true
+                                voiceStatusText = "Listening... speak now"
                             }
-                        }
-                        voiceStatusText = null
+
+                            override fun onBeginningOfSpeech() {
+                                voiceStatusText = "Hearing voice..."
+                            }
+
+                            override fun onRmsChanged(rmsdB: Float) {}
+                            override fun onBufferReceived(buffer: ByteArray?) {}
+                            override fun onEndOfSpeech() {
+                                voiceStatusText = "Translating speech..."
+                            }
+
+                            override fun onError(error: Int) {
+                                isListeningVoice = false
+                                val msg = when (error) {
+                                    SpeechRecognizer.ERROR_AUDIO -> "Audio recording error"
+                                    SpeechRecognizer.ERROR_CLIENT -> "Speech recognizer busy"
+                                    SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Mic permission needed"
+                                    SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "Network required for voice"
+                                    SpeechRecognizer.ERROR_NO_MATCH -> "No speech recognized"
+                                    SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "No speech heard"
+                                    else -> "Voice ended"
+                                }
+                                voiceStatusText = msg
+                                mainHandler.postDelayed({ voiceStatusText = null }, 2200)
+                            }
+
+                            override fun onResults(results: Bundle?) {
+                                isListeningVoice = false
+                                val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION) ?: arrayListOf()
+                                val (bestSpoken, _) = SpeechCorrector.processSpeechResults(matches)
+
+                                if (bestSpoken.isNotBlank()) {
+                                    serviceScope.launch(Dispatchers.IO) {
+                                        val targetToUse = if (targetLang == Language.AUTO) Language.ENGLISH else targetLang
+                                        val trans = translationRepo.translate(
+                                            text = bestSpoken,
+                                            sourceLang = sourceLang,
+                                            targetLang = targetToUse,
+                                            forceBusinessMode = false
+                                        )
+                                        val textToCommit = if (trans.translatedText.isNotBlank()) trans.translatedText else bestSpoken
+                                        serviceScope.launch(Dispatchers.Main) {
+                                            currentInputConnection?.commitText(textToCommit + " ", 1)
+                                        }
+                                    }
+                                }
+                                voiceStatusText = null
+                            }
+
+                            override fun onPartialResults(partialResults: Bundle?) {}
+                            override fun onEvent(eventType: Int, params: Bundle?) {}
+                        })
                     }
 
-                    override fun onPartialResults(partialResults: Bundle?) {}
-                    override fun onEvent(eventType: Int, params: Bundle?) {}
-                })
-            }
-
-            val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-                putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5)
-                putExtra("android.speech.extra.EXTRA_ADDITIONAL_LANGUAGES", arrayOf("en-IN", "en-US", "hi-IN", "ur-PK", "ar-SA"))
-                if (sourceLang != Language.AUTO) {
-                    putExtra(RecognizerIntent.EXTRA_LANGUAGE, sourceLang.code)
+                    val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                        putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                        putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5)
+                        if (sourceLang != Language.AUTO) {
+                            putExtra(RecognizerIntent.EXTRA_LANGUAGE, sourceLang.code)
+                        }
+                    }
+                    speechRecognizer?.startListening(intent)
+                } catch (e: Exception) {
+                    isListeningVoice = false
+                    voiceStatusText = "Voice initialization error"
+                    mainHandler.postDelayed({ voiceStatusText = null }, 2000)
                 }
             }
-            speechRecognizer?.startListening(intent)
         } catch (e: Exception) {
             isListeningVoice = false
-            e.printStackTrace()
+            voiceStatusText = "Voice error"
+            mainHandler.postDelayed({ voiceStatusText = null }, 2000)
         }
     }
 
@@ -533,11 +723,12 @@ class QuickTranslateKeyboardService : InputMethodService(), LifecycleOwner, View
         speechRecognizer = null
     }
 
-    override fun onDestroy() {
-        super.onDestroy()
-        stopVoiceInput()
-        serviceScope.cancel()
-        lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
-        store.clear()
+    private fun handleSwitchInputMethod() {
+        try {
+            val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+            imm?.showInputMethodPicker()
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
 }
