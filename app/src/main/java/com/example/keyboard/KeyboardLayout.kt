@@ -5,19 +5,17 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -27,6 +25,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Backspace
 import androidx.compose.material.icons.automirrored.filled.KeyboardReturn
 import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.AutoFixHigh
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.FlashOn
@@ -34,6 +33,7 @@ import androidx.compose.material.icons.filled.KeyboardCapslock
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
+import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.Translate
 import androidx.compose.material3.CircularProgressIndicator
@@ -58,6 +58,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
+import com.example.domain.ai.AiTone
 import com.example.domain.model.Language
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -71,11 +73,11 @@ enum class KeyboardKeyMode {
 }
 
 val GboardBg = Color(0xFF1E1F22)
-val GboardToolbarBg = Color(0xFF282A2E)
-val GboardKeyBg = Color(0xFF2D2F33)
-val GboardKeyPressedBg = Color(0xFF404347)
-val GboardFnKeyBg = Color(0xFF232528)
+val GboardToolbarBg = Color(0xFF26282B)
+val GboardKeyBg = Color(0xFF2F3136)
+val GboardFnKeyBg = Color(0xFF26272B)
 val GboardEnterBlue = Color(0xFF1A73E8)
+val GboardLiveGreen = Color(0xFF1E7E34)
 val GboardTextWhite = Color(0xFFF2F2F2)
 val GboardSubText = Color(0xFF9AA0A6)
 
@@ -96,6 +98,10 @@ fun KeyboardLayout(
     isShifted: Boolean,
     isCapsLock: Boolean,
     showLanguagePickerFor: String?,
+    suggestions: List<String> = emptyList(),
+    showAiMenu: Boolean = false,
+    isAiGenerating: Boolean = false,
+    aiSmartReplies: List<String> = emptyList(),
     onKeyClick: (String) -> Unit,
     onBackspace: () -> Unit,
     onEnter: () -> Unit,
@@ -112,7 +118,11 @@ fun KeyboardLayout(
     onToggleLiveMode: () -> Unit,
     onVoiceClick: () -> Unit,
     onPasteClipboard: () -> Unit,
-    onSwitchIme: () -> Unit
+    onSwitchIme: () -> Unit,
+    onSelectSuggestion: (String) -> Unit = {},
+    onToggleAiMenu: () -> Unit = {},
+    onApplyAiTone: (AiTone) -> Unit = {},
+    onApplySmartReply: (String) -> Unit = {}
 ) {
     Column(
         modifier = Modifier
@@ -120,6 +130,7 @@ fun KeyboardLayout(
             .background(GboardBg)
             .padding(bottom = 6.dp)
     ) {
+        // Toolbar Section
         KeyboardToolbarSection(
             sourceLang = sourceLang,
             targetLang = targetLang,
@@ -133,6 +144,9 @@ fun KeyboardLayout(
             isListeningVoice = isListeningVoice,
             voiceStatusText = voiceStatusText,
             showLanguagePickerFor = showLanguagePickerFor,
+            showAiMenu = showAiMenu,
+            isAiGenerating = isAiGenerating,
+            aiSmartReplies = aiSmartReplies,
             onSwapLanguages = onSwapLanguages,
             onOpenLanguagePicker = onOpenLanguagePicker,
             onSelectLanguage = onSelectLanguage,
@@ -142,11 +156,23 @@ fun KeyboardLayout(
             onInsertLiveTranslation = onInsertLiveTranslation,
             onToggleLiveMode = onToggleLiveMode,
             onVoiceClick = onVoiceClick,
-            onPasteClipboard = onPasteClipboard
+            onPasteClipboard = onPasteClipboard,
+            onToggleAiMenu = onToggleAiMenu,
+            onApplyAiTone = onApplyAiTone,
+            onApplySmartReply = onApplySmartReply
         )
+
+        // Smart Auto-Correction & Suggestions Strip
+        if (suggestions.isNotEmpty()) {
+            SuggestionsBar(
+                suggestions = suggestions,
+                onSelectSuggestion = onSelectSuggestion
+            )
+        }
 
         Spacer(modifier = Modifier.height(4.dp))
 
+        // Keys Section with iPhone-style Key Magnifier Popups
         KeyboardKeysSection(
             keyMode = keyMode,
             isUpper = isShifted || isCapsLock,
@@ -164,6 +190,53 @@ fun KeyboardLayout(
 }
 
 @Composable
+private fun SuggestionsBar(
+    suggestions: List<String>,
+    onSelectSuggestion: (String) -> Unit
+) {
+    val view = LocalView.current
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(38.dp)
+            .background(Color(0xFF222428))
+            .padding(horizontal = 6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        suggestions.forEachIndexed { index, suggestion ->
+            val isPrimary = index == 1 || (suggestions.size == 1)
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .clickable {
+                        try { view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP) } catch (e: Exception) {}
+                        onSelectSuggestion(suggestion)
+                    }
+                    .padding(vertical = 4.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = suggestion,
+                    color = if (isPrimary) Color(0xFF8AB4F8) else GboardTextWhite,
+                    fontWeight = if (isPrimary) FontWeight.Bold else FontWeight.Normal,
+                    fontSize = if (isPrimary) 15.sp else 14.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            if (index < suggestions.size - 1) {
+                Box(
+                    modifier = Modifier
+                        .width(1.dp)
+                        .height(18.dp)
+                        .background(Color(0xFF383B40))
+                )
+            }
+        }
+    }
+}
+
+@Composable
 private fun KeyboardToolbarSection(
     sourceLang: Language,
     targetLang: Language,
@@ -177,6 +250,9 @@ private fun KeyboardToolbarSection(
     isListeningVoice: Boolean,
     voiceStatusText: String?,
     showLanguagePickerFor: String?,
+    showAiMenu: Boolean,
+    isAiGenerating: Boolean,
+    aiSmartReplies: List<String>,
     onSwapLanguages: () -> Unit,
     onOpenLanguagePicker: (String) -> Unit,
     onSelectLanguage: (Language, String) -> Unit,
@@ -186,7 +262,10 @@ private fun KeyboardToolbarSection(
     onInsertLiveTranslation: () -> Unit,
     onToggleLiveMode: () -> Unit,
     onVoiceClick: () -> Unit,
-    onPasteClipboard: () -> Unit
+    onPasteClipboard: () -> Unit,
+    onToggleAiMenu: () -> Unit,
+    onApplyAiTone: (AiTone) -> Unit,
+    onApplySmartReply: (String) -> Unit
 ) {
     val view = LocalView.current
     fun haptic() {
@@ -200,6 +279,7 @@ private fun KeyboardToolbarSection(
     )
 
     Column(modifier = Modifier.fillMaxWidth()) {
+        // Gboard Main Toolbar
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -209,6 +289,7 @@ private fun KeyboardToolbarSection(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
+            // Source Language Pill
             Surface(
                 onClick = {
                     haptic()
@@ -245,6 +326,7 @@ private fun KeyboardToolbarSection(
                 }
             }
 
+            // Swap Languages
             IconButton(
                 onClick = {
                     haptic()
@@ -254,12 +336,13 @@ private fun KeyboardToolbarSection(
             ) {
                 Icon(
                     imageVector = Icons.Default.SwapHoriz,
-                    contentDescription = "Swap Languages",
-                    tint = Color(0xFF8AB4F8),
+                    contentDescription = "Swap",
+                    tint = GboardSubText,
                     modifier = Modifier.size(18.dp)
                 )
             }
 
+            // Target Language Pill
             Surface(
                 onClick = {
                     haptic()
@@ -274,10 +357,10 @@ private fun KeyboardToolbarSection(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = targetLang.name,
-                        color = Color(0xFF8AB4F8),
+                        text = "${targetLang.flagEmoji} ${targetLang.name}",
+                        color = GboardTextWhite,
                         fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
+                        fontWeight = FontWeight.SemiBold,
                         maxLines = 1
                     )
                     Icon(
@@ -289,8 +372,36 @@ private fun KeyboardToolbarSection(
                 }
             }
 
-            Spacer(modifier = Modifier.weight(1f))
+            // AI Magic Button (Gemini AI Assistant & Tones)
+            Surface(
+                onClick = {
+                    haptic()
+                    onToggleAiMenu()
+                },
+                shape = RoundedCornerShape(12.dp),
+                color = if (showAiMenu) Color(0xFF6A1B9A) else Color(0xFF38234A)
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 7.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.AutoFixHigh,
+                        contentDescription = "AI Magic",
+                        tint = if (showAiMenu) Color.White else Color(0xFFCE93D8),
+                        modifier = Modifier.size(13.dp)
+                    )
+                    Spacer(modifier = Modifier.width(3.dp))
+                    Text(
+                        text = "AI ✨",
+                        color = if (showAiMenu) Color.White else Color(0xFFE1BEE7),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
 
+            // Live Translation Toggle
             Surface(
                 onClick = {
                     haptic()
@@ -300,7 +411,7 @@ private fun KeyboardToolbarSection(
                 color = if (isLiveModeEnabled) Color(0xFF0F5132) else Color(0xFF32363C)
             ) {
                 Row(
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                    modifier = Modifier.padding(horizontal = 7.dp, vertical = 4.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Icon(
@@ -319,8 +430,7 @@ private fun KeyboardToolbarSection(
                 }
             }
 
-            Spacer(modifier = Modifier.width(4.dp))
-
+            // Voice Dictation (Mic)
             IconButton(
                 onClick = {
                     haptic()
@@ -336,6 +446,7 @@ private fun KeyboardToolbarSection(
                 )
             }
 
+            // Paste Clipboard Icon
             IconButton(
                 onClick = {
                     haptic()
@@ -352,6 +463,93 @@ private fun KeyboardToolbarSection(
             }
         }
 
+        // AI Assistant Magic Bar (Tones & Smart Replies)
+        AnimatedVisibility(visible = showAiMenu) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(Color(0xFF241C2E))
+                    .padding(horizontal = 8.dp, vertical = 6.dp)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    if (isAiGenerating) {
+                        CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color(0xFFCE93D8), strokeWidth = 2.dp)
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("AI writing...", color = Color(0xFFCE93D8), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    } else {
+                        AiTone.entries.forEach { tone ->
+                            Surface(
+                                onClick = {
+                                    haptic()
+                                    onApplyAiTone(tone)
+                                },
+                                shape = RoundedCornerShape(12.dp),
+                                color = Color(0xFF3E2856)
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(text = tone.iconLabel, fontSize = 12.sp)
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        text = tone.title,
+                                        color = Color.White,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // AI Smart Replies Carousel (if copied message exists)
+                if (aiSmartReplies.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = "AI Smart Replies to copied message:",
+                        color = Color(0xFFCE93D8),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        aiSmartReplies.forEach { reply ->
+                            Surface(
+                                onClick = {
+                                    haptic()
+                                    onApplySmartReply(reply)
+                                },
+                                shape = RoundedCornerShape(12.dp),
+                                color = Color(0xFF1E2838)
+                            ) {
+                                Text(
+                                    text = reply,
+                                    color = Color(0xFF8AB4F8),
+                                    fontSize = 12.sp,
+                                    maxLines = 1,
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Language Picker Horizontal Carousel
         AnimatedVisibility(visible = showLanguagePickerFor != null) {
             Row(
                 modifier = Modifier
@@ -385,6 +583,7 @@ private fun KeyboardToolbarSection(
             }
         }
 
+        // Voice Listening Active Banner
         if (isListeningVoice) {
             Row(
                 modifier = Modifier
@@ -412,6 +611,7 @@ private fun KeyboardToolbarSection(
             }
         }
 
+        // Clipboard Instant Translation Banner (WhatsApp Auto-Translate)
         if (isTranslatingCopied) {
             Row(
                 modifier = Modifier
@@ -428,86 +628,103 @@ private fun KeyboardToolbarSection(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .background(Color(0xFF132032))
-                    .border(1.dp, Color(0xFF1A73E8).copy(alpha = 0.5f))
-                    .padding(horizontal = 10.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically
+                    .background(Color(0xFF1F2430))
+                    .padding(horizontal = 10.dp, vertical = 5.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Icon(imageVector = Icons.Default.Translate, contentDescription = null, tint = Color(0xFF8AB4F8), modifier = Modifier.size(18.dp))
-                Spacer(modifier = Modifier.width(8.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "📋 Copied: \"${copiedOriginalText?.take(22) ?: ""}\"",
-                        color = GboardSubText,
-                        fontSize = 10.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
+                Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = "Translated into ${targetLang.name}:",
+                            color = Color(0xFF8AB4F8),
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(text = "• WhatsApp Copied", color = GboardSubText, fontSize = 10.sp)
+                    }
                     Text(
                         text = copiedTranslatedText,
-                        color = GboardTextWhite,
+                        color = Color.White,
                         fontSize = 13.sp,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 1,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 2,
                         overflow = TextOverflow.Ellipsis
                     )
                 }
-                Spacer(modifier = Modifier.width(6.dp))
-                Surface(
-                    onClick = {
-                        haptic()
-                        onInsertCopiedTranslation()
-                    },
-                    shape = RoundedCornerShape(14.dp),
-                    color = GboardEnterBlue
-                ) {
-                    Text(
-                        text = "Paste ↵",
-                        color = Color.White,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
-                    )
-                }
-                Spacer(modifier = Modifier.width(4.dp))
-                IconButton(
-                    onClick = {
-                        haptic()
-                        onDismissCopiedChip()
-                    },
-                    modifier = Modifier.size(24.dp)
-                ) {
-                    Icon(imageVector = Icons.Default.Close, contentDescription = "Dismiss", tint = GboardSubText, modifier = Modifier.size(15.dp))
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Surface(
+                        onClick = {
+                            haptic()
+                            onInsertCopiedTranslation()
+                        },
+                        shape = RoundedCornerShape(8.dp),
+                        color = GboardEnterBlue
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(text = "Paste ↵", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                    Spacer(modifier = Modifier.width(4.dp))
+                    IconButton(
+                        onClick = {
+                            haptic()
+                            onDismissCopiedChip()
+                        },
+                        modifier = Modifier.size(24.dp)
+                    ) {
+                        Icon(imageVector = Icons.Default.Close, contentDescription = "Dismiss", tint = GboardSubText, modifier = Modifier.size(14.dp))
+                    }
                 }
             }
         }
 
+        // Live Auto-Translate Floating Preview Banner
         if (isLiveModeEnabled && liveTypedText.isNotBlank()) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .background(Color(0xFF19251E))
-                    .clickable {
+                    .background(Color(0xFF12281D))
+                    .padding(horizontal = 10.dp, vertical = 5.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                    Text(text = "Live translation -> ${targetLang.name}", color = Color(0xFF75B798), fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                    if (isLiveTranslating) {
+                        Text(text = "Translating...", color = Color(0xFFA3CFBB), fontSize = 12.sp)
+                    } else {
+                        Text(
+                            text = liveTranslatedText ?: liveTypedText,
+                            color = Color(0xFFD1E7DD),
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+
+                Surface(
+                    onClick = {
                         haptic()
                         onInsertLiveTranslation()
-                    }
-                    .padding(horizontal = 12.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Icon(imageVector = Icons.Default.FlashOn, contentDescription = null, tint = Color(0xFF34A853), modifier = Modifier.size(16.dp))
-                Spacer(modifier = Modifier.width(6.dp))
-                Column(modifier = Modifier.weight(1f)) {
+                    },
+                    shape = RoundedCornerShape(8.dp),
+                    color = GboardLiveGreen
+                ) {
                     Text(
-                        text = if (isLiveTranslating) "Translating..." else (liveTranslatedText ?: liveTypedText),
-                        color = Color(0xFFA8DAB5),
-                        fontSize = 13.sp,
+                        text = "Replace ↵",
+                        color = Color.White,
+                        fontSize = 11.sp,
                         fontWeight = FontWeight.Bold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp)
                     )
-                }
-                Surface(shape = RoundedCornerShape(12.dp), color = Color(0xFF1E7E34)) {
-                    Text(text = "Replace & Send", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
                 }
             }
         }
@@ -546,14 +763,16 @@ private fun KeyboardKeysSection(
             onBackspace = onBackspace,
             onEnter = onEnter,
             onSpace = onSpace,
-            onModeChange = onModeChange
+            onModeChange = onModeChange,
+            onSwitchIme = onSwitchIme
         )
         KeyboardKeyMode.EXTRA_SYMBOLS -> FastExtraSymbolsLayout(
             onKeyClick = onKeyClick,
             onBackspace = onBackspace,
             onEnter = onEnter,
             onSpace = onSpace,
-            onModeChange = onModeChange
+            onModeChange = onModeChange,
+            onSwitchIme = onSwitchIme
         )
     }
 }
@@ -589,6 +808,7 @@ private fun FastLettersLayout(
             .padding(horizontal = 3.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
+        // ROW 1: Q-P
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             row1.forEach { (letter, num) ->
                 val label = if (isUpper) letter.uppercase() else letter
@@ -608,6 +828,7 @@ private fun FastLettersLayout(
             }
         }
 
+        // ROW 2: A-L
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -628,11 +849,13 @@ private fun FastLettersLayout(
             }
         }
 
+        // ROW 3: Shift, Z-M, Auto-Repeat Backspace
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(4.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
+            // Shift Key
             Box(
                 modifier = Modifier
                     .weight(1.4f)
@@ -666,13 +889,14 @@ private fun FastLettersLayout(
                 )
             }
 
+            // Auto-Repeat Backspace Key
             FastBackspaceKey(
                 modifier = Modifier.weight(1.4f),
-                backgroundColor = GboardFnKeyBg,
                 onBackspace = onBackspace
             )
         }
 
+        // ROW 4: ?123, Emoji/Lang, Space, ., Enter
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -690,18 +914,8 @@ private fun FastLettersLayout(
                     },
                 contentAlignment = Alignment.Center
             ) {
-                Text(text = "?123", color = GboardTextWhite, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                Text(text = "?123", color = GboardTextWhite, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
             }
-
-            FastKey(
-                primaryText = ",",
-                secondaryText = null,
-                modifier = Modifier.weight(0.9f),
-                onClick = {
-                    haptic()
-                    onKeyClick(",")
-                }
-            )
 
             Box(
                 modifier = Modifier
@@ -715,44 +929,49 @@ private fun FastLettersLayout(
                     },
                 contentAlignment = Alignment.Center
             ) {
-                Icon(imageVector = Icons.Default.Language, contentDescription = "Switch Keyboard", tint = GboardSubText, modifier = Modifier.size(18.dp))
+                Icon(imageVector = Icons.Default.Language, contentDescription = "Switch Keyboard", tint = GboardSubText, modifier = Modifier.size(19.dp))
             }
 
+            FastKey(
+                primaryText = ",",
+                secondaryText = null,
+                modifier = Modifier.weight(0.9f),
+                onClick = { haptic(); onKeyClick(",") }
+            )
+
+            // Spacebar
             Box(
                 modifier = Modifier
-                    .weight(4.4f)
+                    .weight(3.8f)
                     .height(46.dp)
                     .shadow(1.dp, RoundedCornerShape(6.dp))
                     .background(GboardKeyBg, RoundedCornerShape(6.dp))
-                    .clickable {
-                        haptic()
-                        onSpace()
-                    },
+                    .clickable { haptic(); onSpace() },
                 contentAlignment = Alignment.Center
             ) {
-                Text(text = "English · QuickTranslate", color = GboardSubText, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                Text(
+                    text = "QuickTranslate",
+                    color = GboardSubText.copy(alpha = 0.6f),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium
+                )
             }
 
             FastKey(
                 primaryText = ".",
                 secondaryText = null,
                 modifier = Modifier.weight(0.9f),
-                onClick = {
-                    haptic()
-                    onKeyClick(".")
-                }
+                onClick = { haptic(); onKeyClick(".") }
             )
 
+            // Enter Button
             Box(
                 modifier = Modifier
                     .weight(1.4f)
                     .height(46.dp)
-                    .shadow(2.dp, RoundedCornerShape(6.dp))
+                    .shadow(1.dp, RoundedCornerShape(6.dp))
                     .background(GboardEnterBlue, RoundedCornerShape(6.dp))
-                    .clickable {
-                        haptic()
-                        onEnter()
-                    },
+                    .clickable { haptic(); onEnter() },
                 contentAlignment = Alignment.Center
             ) {
                 Icon(imageVector = Icons.AutoMirrored.Filled.KeyboardReturn, contentDescription = "Enter", tint = Color.White, modifier = Modifier.size(20.dp))
@@ -767,7 +986,8 @@ private fun FastSymbolsLayout(
     onBackspace: () -> Unit,
     onEnter: () -> Unit,
     onSpace: () -> Unit,
-    onModeChange: (KeyboardKeyMode) -> Unit
+    onModeChange: (KeyboardKeyMode) -> Unit,
+    onSwitchIme: () -> Unit
 ) {
     val view = LocalView.current
     fun haptic() {
@@ -775,7 +995,7 @@ private fun FastSymbolsLayout(
     }
 
     val row1 = listOf("1", "2", "3", "4", "5", "6", "7", "8", "9", "0")
-    val row2 = listOf("@", "#", "$", "%", "&", "-", "+", "(", ")", "/")
+    val row2 = listOf("@", "#", "$", "_", "&", "-", "+", "(", ")", "/")
     val row3 = listOf("*", "\"", "'", ":", ";", "!", "?")
 
     Column(
@@ -785,11 +1005,17 @@ private fun FastSymbolsLayout(
         verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            row1.forEach { k -> FastKey(primaryText = k, modifier = Modifier.weight(1f), onClick = { haptic(); onKeyClick(k) }) }
+            row1.forEach { sym ->
+                FastKey(primaryText = sym, modifier = Modifier.weight(1f), onClick = { haptic(); onKeyClick(sym) })
+            }
         }
+
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            row2.forEach { k -> FastKey(primaryText = k, modifier = Modifier.weight(1f), onClick = { haptic(); onKeyClick(k) }) }
+            row2.forEach { sym ->
+                FastKey(primaryText = sym, modifier = Modifier.weight(1f), onClick = { haptic(); onKeyClick(sym) })
+            }
         }
+
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -797,24 +1023,23 @@ private fun FastSymbolsLayout(
         ) {
             Box(
                 modifier = Modifier
-                    .weight(1.4f)
+                    .weight(1.3f)
                     .height(46.dp)
                     .shadow(1.dp, RoundedCornerShape(6.dp))
                     .background(GboardFnKeyBg, RoundedCornerShape(6.dp))
                     .clickable { haptic(); onModeChange(KeyboardKeyMode.EXTRA_SYMBOLS) },
                 contentAlignment = Alignment.Center
             ) {
-                Text(text = "=\\<", color = GboardTextWhite, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                Text(text = "=\\<", color = GboardTextWhite, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
             }
 
-            row3.forEach { k -> FastKey(primaryText = k, modifier = Modifier.weight(1f), onClick = { haptic(); onKeyClick(k) }) }
+            row3.forEach { sym ->
+                FastKey(primaryText = sym, modifier = Modifier.weight(1f), onClick = { haptic(); onKeyClick(sym) })
+            }
 
-            FastBackspaceKey(
-                modifier = Modifier.weight(1.4f),
-                backgroundColor = GboardFnKeyBg,
-                onBackspace = onBackspace
-            )
+            FastBackspaceKey(modifier = Modifier.weight(1.3f), onBackspace = onBackspace)
         }
+
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -822,33 +1047,49 @@ private fun FastSymbolsLayout(
         ) {
             Box(
                 modifier = Modifier
-                    .weight(1.4f)
+                    .weight(1.3f)
                     .height(46.dp)
                     .shadow(1.dp, RoundedCornerShape(6.dp))
                     .background(GboardFnKeyBg, RoundedCornerShape(6.dp))
                     .clickable { haptic(); onModeChange(KeyboardKeyMode.LETTERS) },
                 contentAlignment = Alignment.Center
             ) {
-                Text(text = "ABC", color = GboardTextWhite, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                Text(text = "ABC", color = GboardTextWhite, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
             }
-            FastKey(primaryText = ",", modifier = Modifier.weight(1f), onClick = { haptic(); onKeyClick(",") })
+
             Box(
                 modifier = Modifier
-                    .weight(4.4f)
+                    .weight(0.9f)
+                    .height(46.dp)
+                    .shadow(1.dp, RoundedCornerShape(6.dp))
+                    .background(GboardFnKeyBg, RoundedCornerShape(6.dp))
+                    .clickable { haptic(); onSwitchIme() },
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(imageVector = Icons.Default.Language, contentDescription = "Switch", tint = GboardSubText, modifier = Modifier.size(19.dp))
+            }
+
+            FastKey(primaryText = ",", modifier = Modifier.weight(0.9f), onClick = { haptic(); onKeyClick(",") })
+
+            Box(
+                modifier = Modifier
+                    .weight(3.8f)
                     .height(46.dp)
                     .shadow(1.dp, RoundedCornerShape(6.dp))
                     .background(GboardKeyBg, RoundedCornerShape(6.dp))
                     .clickable { haptic(); onSpace() },
                 contentAlignment = Alignment.Center
             ) {
-                Text(text = "space", color = GboardSubText, fontSize = 12.sp)
+                Text(text = "QuickTranslate", color = GboardSubText.copy(alpha = 0.6f), fontSize = 12.sp)
             }
-            FastKey(primaryText = ".", modifier = Modifier.weight(1f), onClick = { haptic(); onKeyClick(".") })
+
+            FastKey(primaryText = ".", modifier = Modifier.weight(0.9f), onClick = { haptic(); onKeyClick(".") })
+
             Box(
                 modifier = Modifier
                     .weight(1.4f)
                     .height(46.dp)
-                    .shadow(2.dp, RoundedCornerShape(6.dp))
+                    .shadow(1.dp, RoundedCornerShape(6.dp))
                     .background(GboardEnterBlue, RoundedCornerShape(6.dp))
                     .clickable { haptic(); onEnter() },
                 contentAlignment = Alignment.Center
@@ -865,7 +1106,8 @@ private fun FastExtraSymbolsLayout(
     onBackspace: () -> Unit,
     onEnter: () -> Unit,
     onSpace: () -> Unit,
-    onModeChange: (KeyboardKeyMode) -> Unit
+    onModeChange: (KeyboardKeyMode) -> Unit,
+    onSwitchIme: () -> Unit
 ) {
     val view = LocalView.current
     fun haptic() {
@@ -873,8 +1115,8 @@ private fun FastExtraSymbolsLayout(
     }
 
     val row1 = listOf("~", "`", "|", "•", "√", "π", "÷", "×", "¶", "∆")
-    val row2 = listOf("£", "¢", "€", "¥", "^", "°", "=", "{", "}", "\\")
-    val row3 = listOf("%", "©", "®", "™", "✓", "[", "]")
+    val row2 = listOf("£", "€", "¥", "¢", "^", "°", "=", "{", "}", "\\")
+    val row3 = listOf("%", "©", "®", "[", "]", "<", ">")
 
     Column(
         modifier = Modifier
@@ -883,11 +1125,17 @@ private fun FastExtraSymbolsLayout(
         verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            row1.forEach { k -> FastKey(primaryText = k, modifier = Modifier.weight(1f), onClick = { haptic(); onKeyClick(k) }) }
+            row1.forEach { sym ->
+                FastKey(primaryText = sym, modifier = Modifier.weight(1f), onClick = { haptic(); onKeyClick(sym) })
+            }
         }
+
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            row2.forEach { k -> FastKey(primaryText = k, modifier = Modifier.weight(1f), onClick = { haptic(); onKeyClick(k) }) }
+            row2.forEach { sym ->
+                FastKey(primaryText = sym, modifier = Modifier.weight(1f), onClick = { haptic(); onKeyClick(sym) })
+            }
         }
+
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -895,22 +1143,23 @@ private fun FastExtraSymbolsLayout(
         ) {
             Box(
                 modifier = Modifier
-                    .weight(1.4f)
+                    .weight(1.3f)
                     .height(46.dp)
                     .shadow(1.dp, RoundedCornerShape(6.dp))
                     .background(GboardFnKeyBg, RoundedCornerShape(6.dp))
                     .clickable { haptic(); onModeChange(KeyboardKeyMode.SYMBOLS) },
                 contentAlignment = Alignment.Center
             ) {
-                Text(text = "?123", color = GboardTextWhite, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                Text(text = "?123", color = GboardTextWhite, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
             }
-            row3.forEach { k -> FastKey(primaryText = k, modifier = Modifier.weight(1f), onClick = { haptic(); onKeyClick(k) }) }
-            FastBackspaceKey(
-                modifier = Modifier.weight(1.4f),
-                backgroundColor = GboardFnKeyBg,
-                onBackspace = onBackspace
-            )
+
+            row3.forEach { sym ->
+                FastKey(primaryText = sym, modifier = Modifier.weight(1f), onClick = { haptic(); onKeyClick(sym) })
+            }
+
+            FastBackspaceKey(modifier = Modifier.weight(1.3f), onBackspace = onBackspace)
         }
+
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -918,33 +1167,49 @@ private fun FastExtraSymbolsLayout(
         ) {
             Box(
                 modifier = Modifier
-                    .weight(1.4f)
+                    .weight(1.3f)
                     .height(46.dp)
                     .shadow(1.dp, RoundedCornerShape(6.dp))
                     .background(GboardFnKeyBg, RoundedCornerShape(6.dp))
                     .clickable { haptic(); onModeChange(KeyboardKeyMode.LETTERS) },
                 contentAlignment = Alignment.Center
             ) {
-                Text(text = "ABC", color = GboardTextWhite, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                Text(text = "ABC", color = GboardTextWhite, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
             }
-            FastKey(primaryText = "<", modifier = Modifier.weight(1f), onClick = { haptic(); onKeyClick("<") })
+
             Box(
                 modifier = Modifier
-                    .weight(4.4f)
+                    .weight(0.9f)
+                    .height(46.dp)
+                    .shadow(1.dp, RoundedCornerShape(6.dp))
+                    .background(GboardFnKeyBg, RoundedCornerShape(6.dp))
+                    .clickable { haptic(); onSwitchIme() },
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(imageVector = Icons.Default.Language, contentDescription = "Switch", tint = GboardSubText, modifier = Modifier.size(19.dp))
+            }
+
+            FastKey(primaryText = ",", modifier = Modifier.weight(0.9f), onClick = { haptic(); onKeyClick(",") })
+
+            Box(
+                modifier = Modifier
+                    .weight(3.8f)
                     .height(46.dp)
                     .shadow(1.dp, RoundedCornerShape(6.dp))
                     .background(GboardKeyBg, RoundedCornerShape(6.dp))
                     .clickable { haptic(); onSpace() },
                 contentAlignment = Alignment.Center
             ) {
-                Text(text = "space", color = GboardSubText, fontSize = 12.sp)
+                Text(text = "QuickTranslate", color = GboardSubText.copy(alpha = 0.6f), fontSize = 12.sp)
             }
-            FastKey(primaryText = ">", modifier = Modifier.weight(1f), onClick = { haptic(); onKeyClick(">") })
+
+            FastKey(primaryText = ".", modifier = Modifier.weight(0.9f), onClick = { haptic(); onKeyClick(".") })
+
             Box(
                 modifier = Modifier
                     .weight(1.4f)
                     .height(46.dp)
-                    .shadow(2.dp, RoundedCornerShape(6.dp))
+                    .shadow(1.dp, RoundedCornerShape(6.dp))
                     .background(GboardEnterBlue, RoundedCornerShape(6.dp))
                     .clickable { haptic(); onEnter() },
                 contentAlignment = Alignment.Center
@@ -955,6 +1220,10 @@ private fun FastExtraSymbolsLayout(
     }
 }
 
+/**
+ * Key button with iPhone keyboard-style key enlargement preview popup!
+ * When clicked or held, a crisp enlarged bubble pops up directly above the key.
+ */
 @Composable
 private fun FastKey(
     primaryText: String,
@@ -963,50 +1232,101 @@ private fun FastKey(
     onClick: () -> Unit,
     onLongClick: (() -> Unit)? = null
 ) {
+    var isPressed by remember { mutableStateOf(false) }
+    val view = LocalView.current
+
     Box(
         modifier = modifier
             .height(46.dp)
-            .shadow(1.dp, RoundedCornerShape(6.dp))
-            .background(GboardKeyBg, RoundedCornerShape(6.dp))
-            .then(
-                if (onLongClick != null) {
-                    Modifier.pointerInput(Unit) {
-                        detectTapGestures(
-                            onTap = { onClick() },
-                            onLongPress = { onLongClick() }
-                        )
+            .zIndex(if (isPressed) 100f else 1f)
+            .pointerInput(primaryText) {
+                detectTapGestures(
+                    onPress = {
+                        isPressed = true
+                        try { view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP) } catch (e: Exception) {}
+                        val released = tryAwaitRelease()
+                        isPressed = false
+                        if (released) {
+                            onClick()
+                        }
+                    },
+                    onLongPress = {
+                        isPressed = false
+                        if (onLongClick != null) {
+                            try { view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS) } catch (e: Exception) {}
+                            onLongClick()
+                        }
                     }
-                } else {
-                    Modifier.clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null,
-                        onClick = onClick
-                    )
-                }
-            ),
+                )
+            },
         contentAlignment = Alignment.Center
     ) {
-        if (secondaryText != null) {
+        // Base Key Button
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .shadow(1.dp, RoundedCornerShape(6.dp))
+                .background(if (isPressed) Color(0xFF3B4048) else GboardKeyBg, RoundedCornerShape(6.dp)),
+            contentAlignment = Alignment.Center
+        ) {
+            if (secondaryText != null) {
+                Text(
+                    text = secondaryText,
+                    color = GboardSubText,
+                    fontSize = 9.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(top = 2.dp, end = 4.dp)
+                )
+            }
             Text(
-                text = secondaryText,
-                color = GboardSubText,
-                fontSize = 9.sp,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(top = 2.dp, end = 4.dp)
+                text = primaryText,
+                color = GboardTextWhite,
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Normal,
+                textAlign = TextAlign.Center
             )
         }
-        Text(
-            text = primaryText,
-            color = GboardTextWhite,
-            fontSize = 20.sp,
-            fontWeight = FontWeight.Normal,
-            textAlign = TextAlign.Center
-        )
+
+        // iPhone-Style Key Enlargement Preview Bubble
+        if (isPressed) {
+            Box(
+                modifier = Modifier
+                    .offset(y = (-54).dp)
+                    .width(54.dp)
+                    .height(58.dp)
+                    .shadow(10.dp, RoundedCornerShape(12.dp))
+                    .background(Color(0xFF2C2F34), RoundedCornerShape(12.dp))
+                    .border(1.dp, Color.White.copy(alpha = 0.2f), RoundedCornerShape(12.dp)),
+                contentAlignment = Alignment.Center
+            ) {
+                if (secondaryText != null) {
+                    Text(
+                        text = secondaryText,
+                        color = Color(0xFF8AB4F8),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(top = 3.dp, end = 6.dp)
+                    )
+                }
+                Text(
+                    text = primaryText,
+                    color = Color.White,
+                    fontSize = 28.sp,
+                    fontWeight = FontWeight.Bold,
+                    textAlign = TextAlign.Center
+                )
+            }
+        }
     }
 }
 
+/**
+ * Continuous auto-repeating backspace key (Hold to erase continuously)
+ */
 @Composable
 private fun FastBackspaceKey(
     modifier: Modifier = Modifier,
@@ -1023,29 +1343,25 @@ private fun FastBackspaceKey(
             .shadow(1.dp, RoundedCornerShape(6.dp))
             .background(backgroundColor, RoundedCornerShape(6.dp))
             .pointerInput(Unit) {
-                awaitEachGesture {
-                    val down = awaitFirstDown(requireUnconsumed = false)
-                    down.consume()
-                    try {
-                        view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
-                    } catch (e: Exception) {}
-                    onBackspace()
+                detectTapGestures(
+                    onPress = {
+                        try { view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP) } catch (e: Exception) {}
+                        onBackspace()
 
-                    repeatJob = coroutineScope.launch {
-                        delay(350)
-                        while (isActive) {
-                            try {
-                                view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
-                            } catch (e: Exception) {}
-                            onBackspace()
-                            delay(45)
+                        repeatJob = coroutineScope.launch {
+                            delay(400)
+                            while (isActive) {
+                                try { view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP) } catch (e: Exception) {}
+                                onBackspace()
+                                delay(65)
+                            }
                         }
-                    }
 
-                    waitForUpOrCancellation()
-                    repeatJob?.cancel()
-                    repeatJob = null
-                }
+                        tryAwaitRelease()
+                        repeatJob?.cancel()
+                        repeatJob = null
+                    }
+                )
             },
         contentAlignment = Alignment.Center
     ) {
