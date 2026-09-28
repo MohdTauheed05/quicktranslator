@@ -1,6 +1,5 @@
 package com.example.ui.screens
 
-import androidx.compose.material.icons.filled.Keyboard
 import android.content.ClipDescription
 import android.content.ClipboardManager
 import android.content.Context
@@ -31,6 +30,7 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Keyboard
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
@@ -308,7 +308,7 @@ fun HomeScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.height(14.dp))
+            Spacer(modifier = Modifier.height(10.dp))
 
             // NEW: QuickTranslate Keyboard Activation Card
             val imm = remember { context.getSystemService(Context.INPUT_METHOD_SERVICE) as? android.view.inputmethod.InputMethodManager }
@@ -384,12 +384,31 @@ fun HomeScreen(
                                 modifier = Modifier.weight(1f),
                                 shape = RoundedCornerShape(10.dp)
                             ) {
-                                Text("Switch to QuickTranslate Keyboard ⌨️", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                Text("2. Switch to QuickTranslate Keyboard ⌨️", fontWeight = FontWeight.Bold, fontSize = 13.sp)
                             }
                         }
                     }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    // Test Keyboard Input field
+                    var testKeyboardText by remember { mutableStateOf("") }
+                    OutlinedTextField(
+                        value = testKeyboardText,
+                        onValueChange = { testKeyboardText = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        placeholder = { Text("Tap here to test Gboard keyboard...", fontSize = 13.sp) },
+                        shape = RoundedCornerShape(10.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedContainerColor = MaterialTheme.colorScheme.surface,
+                            unfocusedContainerColor = MaterialTheme.colorScheme.surface
+                        ),
+                        singleLine = true
+                    )
                 }
             }
+
+            Spacer(modifier = Modifier.height(14.dp))
 
             // Main Translation Card
             Card(
@@ -849,7 +868,7 @@ fun HomeScreen(
                     }
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = "1. Samsung Edge Pull Handle: Enable the switch above. Pull the edge line inward from the side of the screen over WhatsApp to translate copied messages.\n\n2. Highlight & QuickTranslate: Select message text in WhatsApp -> tap [ QuickTranslate ] in the popup menu to translate without leaving the app.",
+                        text = "1. Floating Bubble: Enable the switch above. When you copy a message in WhatsApp, tap the floating bubble to see the instant translation popup directly over your chat.\n\n2. Highlight & QuickTranslate: Select message text in WhatsApp -> tap [ QuickTranslate ] in the popup menu to translate without leaving the app.",
                         style = MaterialTheme.typography.bodySmall,
                         lineHeight = 18.sp,
                         color = MaterialTheme.colorScheme.onSurface
@@ -864,7 +883,7 @@ fun HomeScreen(
             onDismissRequest = { viewModel.dismissOverlayPermissionDialog() },
             title = { Text("Enable Display Over Other Apps") },
             text = {
-                Text("To show the Samsung Edge Handle and instant translation popup directly over WhatsApp, Android requires the 'Display over other apps' permission.")
+                Text("To show the instant translation popup and floating bubble directly over WhatsApp, Android requires the 'Display over other apps' permission.")
             },
             confirmButton = {
                 Button(onClick = { viewModel.requestOverlayPermission(context) }) {
