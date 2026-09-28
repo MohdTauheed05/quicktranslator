@@ -5,7 +5,10 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -26,6 +29,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.FlashOn
 import androidx.compose.material.icons.filled.KeyboardCapslock
+import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material.icons.filled.SwapHoriz
@@ -36,9 +40,12 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -52,6 +59,15 @@ enum class KeyboardKeyMode {
     SYMBOLS,
     EXTRA_SYMBOLS
 }
+
+private val GboardBg = Color(0xFF1E1F22)
+private val GboardToolbarBg = Color(0xFF282A2E)
+private val GboardKeyBg = Color(0xFF2D2F33)
+private val GboardKeyPressedBg = Color(0xFF404347)
+private val GboardFnKeyBg = Color(0xFF232528)
+private val GboardEnterBlue = Color(0xFF1A73E8)
+private val GboardTextWhite = Color(0xFFF2F2F2)
+private val GboardSubText = Color(0xFF9AA0A6)
 
 @Composable
 fun KeyboardLayout(
@@ -85,7 +101,8 @@ fun KeyboardLayout(
     onInsertLiveTranslation: () -> Unit,
     onToggleLiveMode: () -> Unit,
     onVoiceClick: () -> Unit,
-    onPasteClipboard: () -> Unit
+    onPasteClipboard: () -> Unit,
+    onSwitchIme: () -> Unit
 ) {
     val view = LocalView.current
 
@@ -104,19 +121,19 @@ fun KeyboardLayout(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(Color(0xFF181A20))
+            .background(GboardBg)
             .padding(bottom = 6.dp)
     ) {
-        // 1. TOP SMART TRANSLATION TOOLBAR
+        // 1. GBOARD TOP TOOLBAR
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(Color(0xFF222630))
-                .padding(horizontal = 8.dp, vertical = 6.dp),
+                .height(44.dp)
+                .background(GboardToolbarBg)
+                .padding(horizontal = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            // Source Language Pill
             Surface(
                 onClick = {
                     performHaptic()
@@ -124,45 +141,50 @@ fun KeyboardLayout(
                     else onOpenLanguagePicker("source")
                 },
                 shape = RoundedCornerShape(8.dp),
-                color = if (showLanguagePickerFor == "source") Color(0xFF3B82F6) else Color(0xFF2D323F)
+                color = if (showLanguagePickerFor == "source") Color(0xFF3C4043) else Color.Transparent
             ) {
                 Row(
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    Icon(
+                        imageVector = Icons.Default.Translate,
+                        contentDescription = "Translate",
+                        tint = Color(0xFF8AB4F8),
+                        modifier = Modifier.size(17.dp)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
                     Text(
-                        text = "${sourceLang.flagEmoji} ${sourceLang.name}",
-                        color = Color.White,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
+                        text = if (sourceLang == Language.AUTO) "Detect" else sourceLang.name,
+                        color = GboardTextWhite,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
                         maxLines = 1
                     )
                     Icon(
                         imageVector = Icons.Default.ArrowDropDown,
                         contentDescription = null,
-                        tint = Color.White.copy(alpha = 0.8f),
+                        tint = GboardSubText,
                         modifier = Modifier.size(14.dp)
                     )
                 }
             }
 
-            // Swap Languages Button
             IconButton(
                 onClick = {
                     performHaptic()
                     onSwapLanguages()
                 },
-                modifier = Modifier.size(28.dp)
+                modifier = Modifier.size(32.dp)
             ) {
                 Icon(
                     imageVector = Icons.Default.SwapHoriz,
                     contentDescription = "Swap Languages",
-                    tint = Color(0xFF60A5FA),
+                    tint = Color(0xFF8AB4F8),
                     modifier = Modifier.size(18.dp)
                 )
             }
 
-            // Target Language Pill
             Surface(
                 onClick = {
                     performHaptic()
@@ -170,23 +192,23 @@ fun KeyboardLayout(
                     else onOpenLanguagePicker("target")
                 },
                 shape = RoundedCornerShape(8.dp),
-                color = if (showLanguagePickerFor == "target") Color(0xFF3B82F6) else Color(0xFF1D4ED8)
+                color = if (showLanguagePickerFor == "target") Color(0xFF3C4043) else Color.Transparent
             ) {
                 Row(
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "${targetLang.flagEmoji} ${targetLang.name}",
-                        color = Color.White,
-                        fontSize = 11.sp,
+                        text = targetLang.name,
+                        color = Color(0xFF8AB4F8),
+                        fontSize = 12.sp,
                         fontWeight = FontWeight.Bold,
                         maxLines = 1
                     )
                     Icon(
                         imageVector = Icons.Default.ArrowDropDown,
                         contentDescription = null,
-                        tint = Color.White.copy(alpha = 0.8f),
+                        tint = GboardSubText,
                         modifier = Modifier.size(14.dp)
                     )
                 }
@@ -194,75 +216,73 @@ fun KeyboardLayout(
 
             Spacer(modifier = Modifier.weight(1f))
 
-            // Live Translate Toggle Button
             Surface(
                 onClick = {
                     performHaptic()
                     onToggleLiveMode()
                 },
-                shape = RoundedCornerShape(8.dp),
-                color = if (isLiveModeEnabled) Color(0xFF10B981) else Color(0xFF2D323F),
-                modifier = Modifier.padding(horizontal = 4.dp)
+                shape = RoundedCornerShape(12.dp),
+                color = if (isLiveModeEnabled) Color(0xFF0F5132) else Color(0xFF32363C)
             ) {
                 Row(
-                    modifier = Modifier.padding(horizontal = 7.dp, vertical = 4.dp),
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Icon(
                         imageVector = Icons.Default.FlashOn,
-                        contentDescription = "Live Translation",
-                        tint = Color.White,
-                        modifier = Modifier.size(12.dp)
+                        contentDescription = null,
+                        tint = if (isLiveModeEnabled) Color(0xFF75B798) else GboardSubText,
+                        modifier = Modifier.size(13.dp)
                     )
                     Spacer(modifier = Modifier.width(3.dp))
                     Text(
-                        text = if (isLiveModeEnabled) "Live ON" else "Live",
-                        color = Color.White,
+                        text = if (isLiveModeEnabled) "Live" else "Live",
+                        color = if (isLiveModeEnabled) Color(0xFFD1E7DD) else GboardSubText,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold
                     )
                 }
             }
 
-            // Microphone Button
+            Spacer(modifier = Modifier.width(4.dp))
+
             IconButton(
                 onClick = {
                     performHaptic()
                     onVoiceClick()
                 },
-                modifier = Modifier.size(28.dp)
+                modifier = Modifier.size(32.dp)
             ) {
                 Icon(
                     imageVector = if (isListeningVoice) Icons.Default.MicOff else Icons.Default.Mic,
-                    contentDescription = "Voice Input",
-                    tint = if (isListeningVoice) Color(0xFFEF4444) else Color(0xFF60A5FA),
-                    modifier = Modifier.size(18.dp)
+                    contentDescription = "Voice Dictation",
+                    tint = if (isListeningVoice) Color(0xFFEA4335) else GboardTextWhite,
+                    modifier = Modifier.size(19.dp)
                 )
             }
 
-            // Paste Clipboard Button
             IconButton(
                 onClick = {
                     performHaptic()
                     onPasteClipboard()
                 },
-                modifier = Modifier.size(28.dp)
+                modifier = Modifier.size(32.dp)
             ) {
                 Icon(
                     imageVector = Icons.Default.ContentPaste,
-                    contentDescription = "Paste Clipboard",
-                    tint = Color.White.copy(alpha = 0.8f),
-                    modifier = Modifier.size(17.dp)
+                    contentDescription = "Paste",
+                    tint = GboardSubText,
+                    modifier = Modifier.size(18.dp)
                 )
             }
         }
 
-        // 2. QUICK LANGUAGE SELECTOR CAROUSEL
+        // 2. LANGUAGE PICKER CHIPS STRIP
         AnimatedVisibility(visible = showLanguagePickerFor != null) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .background(Color(0xFF1E222B))
+                    .background(Color(0xFF202124))
                     .horizontalScroll(rememberScrollState())
                     .padding(horizontal = 8.dp, vertical = 6.dp),
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -276,13 +296,13 @@ fun KeyboardLayout(
                             performHaptic()
                             showLanguagePickerFor?.let { onSelectLanguage(lang, it) }
                         },
-                        shape = RoundedCornerShape(12.dp),
-                        color = if (isSelected) Color(0xFF2563EB) else Color(0xFF2C3240)
+                        shape = RoundedCornerShape(14.dp),
+                        color = if (isSelected) GboardEnterBlue else Color(0xFF2C2F33)
                     ) {
                         Text(
                             text = "${lang.flagEmoji} ${lang.name}",
-                            color = Color.White,
-                            fontSize = 11.sp,
+                            color = GboardTextWhite,
+                            fontSize = 12.sp,
                             fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
                             modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
                         )
@@ -291,26 +311,26 @@ fun KeyboardLayout(
             }
         }
 
-        // 3. VOICE LISTENING BANNER
+        // 3. VOICE LISTENING ACTIVE BANNER
         if (isListeningVoice) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .background(Color(0xFF3B1D25))
-                    .padding(horizontal = 12.dp, vertical = 7.dp),
+                    .background(Color(0xFF2C1618))
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 CircularProgressIndicator(
-                    modifier = Modifier.size(16.dp),
-                    color = Color(0xFFEF4444),
+                    modifier = Modifier.size(14.dp),
+                    color = Color(0xFFEA4335),
                     strokeWidth = 2.dp
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
                     text = voiceStatusText ?: "Listening... speak now",
-                    color = Color(0xFFFECACA),
+                    color = Color(0xFFF28B82),
                     fontSize = 12.sp,
-                    fontWeight = FontWeight.SemiBold,
+                    fontWeight = FontWeight.Medium,
                     modifier = Modifier.weight(1f)
                 )
                 IconButton(onClick = onVoiceClick, modifier = Modifier.size(24.dp)) {
@@ -319,24 +339,24 @@ fun KeyboardLayout(
             }
         }
 
-        // 4. INSTANT CLIPBOARD AUTO-TRANSLATION CHIP
+        // 4. GBOARD CLIPBOARD AUTO-TRANSLATE BANNER
         if (isTranslatingCopied) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .background(Color(0xFF1E293B))
-                    .padding(horizontal = 12.dp, vertical = 7.dp),
+                    .background(Color(0xFF1F2430))
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 CircularProgressIndicator(
                     modifier = Modifier.size(14.dp),
-                    color = Color(0xFF60A5FA),
+                    color = Color(0xFF8AB4F8),
                     strokeWidth = 2.dp
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
                     text = "Translating copied message...",
-                    color = Color(0xFF93C5FD),
+                    color = Color(0xFF8AB4F8),
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Medium
                 )
@@ -345,29 +365,29 @@ fun KeyboardLayout(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .background(Color(0xFF0F2942))
-                    .border(1.dp, Color(0xFF2563EB).copy(alpha = 0.5f))
+                    .background(Color(0xFF132032))
+                    .border(1.dp, Color(0xFF1A73E8).copy(alpha = 0.5f))
                     .padding(horizontal = 10.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Icon(
                     imageVector = Icons.Default.Translate,
                     contentDescription = null,
-                    tint = Color(0xFF60A5FA),
+                    tint = Color(0xFF8AB4F8),
                     modifier = Modifier.size(18.dp)
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "📋 Copied: \"${copiedOriginalText?.take(25) ?: ""}\"",
-                        color = Color(0xFF93C5FD),
+                        text = "📋 Copied: \"${copiedOriginalText?.take(22) ?: ""}\"",
+                        color = GboardSubText,
                         fontSize = 10.sp,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
                     Text(
                         text = copiedTranslatedText,
-                        color = Color.White,
+                        color = GboardTextWhite,
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Bold,
                         maxLines = 1,
@@ -380,15 +400,15 @@ fun KeyboardLayout(
                         performHaptic()
                         onInsertCopiedTranslation()
                     },
-                    shape = RoundedCornerShape(8.dp),
-                    color = Color(0xFF2563EB)
+                    shape = RoundedCornerShape(14.dp),
+                    color = GboardEnterBlue
                 ) {
                     Text(
-                        text = "Insert ↵",
+                        text = "Paste ↵",
                         color = Color.White,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
                     )
                 }
                 Spacer(modifier = Modifier.width(4.dp))
@@ -399,17 +419,17 @@ fun KeyboardLayout(
                     },
                     modifier = Modifier.size(24.dp)
                 ) {
-                    Icon(imageVector = Icons.Default.Close, contentDescription = "Dismiss", tint = Color.White.copy(alpha = 0.6f), modifier = Modifier.size(14.dp))
+                    Icon(imageVector = Icons.Default.Close, contentDescription = "Dismiss", tint = GboardSubText, modifier = Modifier.size(15.dp))
                 }
             }
         }
 
-        // 5. LIVE TYPING TRANSLATION PREVIEW STRIP
+        // 5. LIVE TYPING PREVIEW STRIP
         if (isLiveModeEnabled && liveTypedText.isNotBlank()) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .background(Color(0xFF1E2836))
+                    .background(Color(0xFF19251E))
                     .clickable {
                         performHaptic()
                         onInsertLiveTranslation()
@@ -420,14 +440,14 @@ fun KeyboardLayout(
                 Icon(
                     imageVector = Icons.Default.FlashOn,
                     contentDescription = null,
-                    tint = Color(0xFF10B981),
+                    tint = Color(0xFF34A853),
                     modifier = Modifier.size(16.dp)
                 )
                 Spacer(modifier = Modifier.width(6.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = if (isLiveTranslating) "Translating..." else (liveTranslatedText ?: liveTypedText),
-                        color = Color(0xFFA7F3D0),
+                        color = Color(0xFFA8DAB5),
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Bold,
                         maxLines = 1,
@@ -435,15 +455,15 @@ fun KeyboardLayout(
                     )
                 }
                 Surface(
-                    shape = RoundedCornerShape(6.dp),
-                    color = Color(0xFF059669)
+                    shape = RoundedCornerShape(12.dp),
+                    color = Color(0xFF1E7E34)
                 ) {
                     Text(
                         text = "Replace & Send",
                         color = Color.White,
-                        fontSize = 10.sp,
+                        fontSize = 11.sp,
                         fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                     )
                 }
             }
@@ -451,11 +471,12 @@ fun KeyboardLayout(
 
         Spacer(modifier = Modifier.height(4.dp))
 
-        // 6. MAIN QWERTY / SYMBOL KEYBOARD KEYS
+        // 6. GBOARD MAIN QWERTY / SYMBOL KEYBOARD
         when (keyMode) {
-            KeyboardKeyMode.LETTERS -> LettersKeyboard(
+            KeyboardKeyMode.LETTERS -> GboardLettersKeyboard(
                 isShifted = isShifted,
                 isCapsLock = isCapsLock,
+                targetLangName = targetLang.name,
                 onKeyClick = {
                     performHaptic()
                     onKeyClick(it)
@@ -479,9 +500,10 @@ fun KeyboardLayout(
                 onModeChange = {
                     performHaptic()
                     onModeChange(it)
-                }
+                },
+                onSwitchIme = onSwitchIme
             )
-            KeyboardKeyMode.SYMBOLS -> SymbolsKeyboard(
+            KeyboardKeyMode.SYMBOLS -> GboardSymbolsKeyboard(
                 onKeyClick = {
                     performHaptic()
                     onKeyClick(it)
@@ -503,7 +525,7 @@ fun KeyboardLayout(
                     onModeChange(it)
                 }
             )
-            KeyboardKeyMode.EXTRA_SYMBOLS -> ExtraSymbolsKeyboard(
+            KeyboardKeyMode.EXTRA_SYMBOLS -> GboardExtraSymbolsKeyboard(
                 onKeyClick = {
                     performHaptic()
                     onKeyClick(it)
@@ -530,17 +552,22 @@ fun KeyboardLayout(
 }
 
 @Composable
-private fun LettersKeyboard(
+private fun GboardLettersKeyboard(
     isShifted: Boolean,
     isCapsLock: Boolean,
+    targetLangName: String,
     onKeyClick: (String) -> Unit,
     onBackspace: () -> Unit,
     onEnter: () -> Unit,
     onSpace: () -> Unit,
     onShiftClick: () -> Unit,
-    onModeChange: (KeyboardKeyMode) -> Unit
+    onModeChange: (KeyboardKeyMode) -> Unit,
+    onSwitchIme: () -> Unit
 ) {
-    val row1 = listOf("q", "w", "e", "r", "t", "y", "u", "i", "o", "p")
+    val row1 = listOf(
+        Pair("q", "1"), Pair("w", "2"), Pair("e", "3"), Pair("r", "4"), Pair("t", "5"),
+        Pair("y", "6"), Pair("u", "7"), Pair("i", "8"), Pair("o", "9"), Pair("p", "0")
+    )
     val row2 = listOf("a", "s", "d", "f", "g", "h", "j", "k", "l")
     val row3 = listOf("z", "x", "c", "v", "b", "n", "m")
     val upper = isShifted || isCapsLock
@@ -548,103 +575,164 @@ private fun LettersKeyboard(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 4.dp),
+            .padding(horizontal = 3.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            row1.forEach { k ->
-                val label = if (upper) k.uppercase() else k
-                KeyButton(text = label, modifier = Modifier.weight(1f), onClick = { onKeyClick(label) })
+            row1.forEach { (letter, num) ->
+                val label = if (upper) letter.uppercase() else letter
+                GboardKey(
+                    primaryText = label,
+                    secondaryText = num,
+                    modifier = Modifier.weight(1f),
+                    onClick = { onKeyClick(label) },
+                    onLongClick = { onKeyClick(num) }
+                )
             }
         }
+
         Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp),
             horizontalArrangement = Arrangement.spacedBy(4.dp)
         ) {
-            row2.forEach { k ->
-                val label = if (upper) k.uppercase() else k
-                KeyButton(text = label, modifier = Modifier.weight(1f), onClick = { onKeyClick(label) })
+            row2.forEach { letter ->
+                val label = if (upper) letter.uppercase() else letter
+                GboardKey(
+                    primaryText = label,
+                    secondaryText = null,
+                    modifier = Modifier.weight(1f),
+                    onClick = { onKeyClick(label) }
+                )
             }
         }
+
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(4.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            FunctionKeyButton(
-                icon = {
-                    Icon(
-                        imageVector = Icons.Default.KeyboardCapslock,
-                        contentDescription = "Shift",
-                        tint = if (isCapsLock) Color(0xFF60A5FA) else if (isShifted) Color.White else Color(0xFF9CA3AF),
-                        modifier = Modifier.size(20.dp)
-                    )
-                },
+            GboardFunctionKey(
                 modifier = Modifier.weight(1.4f),
-                backgroundColor = if (isShifted || isCapsLock) Color(0xFF374151) else Color(0xFF242936),
+                backgroundColor = if (isShifted || isCapsLock) Color(0xFF3B4048) else GboardFnKeyBg,
                 onClick = onShiftClick
-            )
-            row3.forEach { k ->
-                val label = if (upper) k.uppercase() else k
-                KeyButton(text = label, modifier = Modifier.weight(1f), onClick = { onKeyClick(label) })
+            ) {
+                Icon(
+                    imageVector = Icons.Default.KeyboardCapslock,
+                    contentDescription = "Shift",
+                    tint = if (isCapsLock) Color(0xFF8AB4F8) else if (isShifted) Color.White else GboardSubText,
+                    modifier = Modifier.size(20.dp)
+                )
             }
-            FunctionKeyButton(
-                icon = {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.Backspace,
-                        contentDescription = "Backspace",
-                        tint = Color.White,
-                        modifier = Modifier.size(19.dp)
-                    )
-                },
+
+            row3.forEach { letter ->
+                val label = if (upper) letter.uppercase() else letter
+                GboardKey(
+                    primaryText = label,
+                    secondaryText = null,
+                    modifier = Modifier.weight(1f),
+                    onClick = { onKeyClick(label) }
+                )
+            }
+
+            GboardFunctionKey(
                 modifier = Modifier.weight(1.4f),
-                backgroundColor = Color(0xFF242936),
+                backgroundColor = GboardFnKeyBg,
                 onClick = onBackspace
-            )
+            ) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.Backspace,
+                    contentDescription = "Backspace",
+                    tint = GboardTextWhite,
+                    modifier = Modifier.size(19.dp)
+                )
+            }
         }
+
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(4.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            KeyButton(
-                text = "?123",
-                modifier = Modifier.weight(1.4f),
-                backgroundColor = Color(0xFF242936),
-                fontSize = 13.sp,
+            GboardFunctionKey(
+                modifier = Modifier.weight(1.3f),
+                backgroundColor = GboardFnKeyBg,
                 onClick = { onModeChange(KeyboardKeyMode.SYMBOLS) }
+            ) {
+                Text(text = "?123", color = GboardTextWhite, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+            }
+
+            GboardKey(
+                primaryText = ",",
+                secondaryText = null,
+                modifier = Modifier.weight(0.9f),
+                onClick = { onKeyClick(",") }
             )
-            KeyButton(text = ",", modifier = Modifier.weight(1f), onClick = { onKeyClick(",") })
+
+            GboardFunctionKey(
+                modifier = Modifier.weight(0.9f),
+                backgroundColor = GboardFnKeyBg,
+                onClick = onSwitchIme
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Language,
+                    contentDescription = "Switch Keyboard",
+                    tint = GboardSubText,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+
             Surface(
                 onClick = onSpace,
-                modifier = Modifier.weight(4.4f).height(44.dp),
-                shape = RoundedCornerShape(8.dp),
-                color = Color(0xFF2E3442)
+                modifier = Modifier
+                    .weight(4.4f)
+                    .height(46.dp),
+                shape = RoundedCornerShape(6.dp),
+                color = GboardKeyBg,
+                shadowElevation = 1.dp
             ) {
                 Box(contentAlignment = Alignment.Center) {
-                    Text(text = "space", color = Color(0xFF94A3B8), fontSize = 12.sp)
+                    Text(
+                        text = "English · QuickTranslate",
+                        color = GboardSubText,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium
+                    )
                 }
             }
-            KeyButton(text = ".", modifier = Modifier.weight(1f), onClick = { onKeyClick(".") })
-            FunctionKeyButton(
-                icon = {
+
+            GboardKey(
+                primaryText = ".",
+                secondaryText = null,
+                modifier = Modifier.weight(0.9f),
+                onClick = { onKeyClick(".") }
+            )
+
+            Surface(
+                onClick = onEnter,
+                modifier = Modifier
+                    .weight(1.4f)
+                    .height(46.dp),
+                shape = RoundedCornerShape(6.dp),
+                color = GboardEnterBlue,
+                shadowElevation = 2.dp
+            ) {
+                Box(contentAlignment = Alignment.Center) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.KeyboardReturn,
                         contentDescription = "Enter",
                         tint = Color.White,
                         modifier = Modifier.size(20.dp)
                     )
-                },
-                modifier = Modifier.weight(1.4f),
-                backgroundColor = Color(0xFF2563EB),
-                onClick = onEnter
-            )
+                }
+            }
         }
     }
 }
 
 @Composable
-private fun SymbolsKeyboard(
+private fun GboardSymbolsKeyboard(
     onKeyClick: (String) -> Unit,
     onBackspace: () -> Unit,
     onEnter: () -> Unit,
@@ -656,61 +744,80 @@ private fun SymbolsKeyboard(
     val row3 = listOf("*", "\"", "'", ":", ";", "!", "?")
 
     Column(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 3.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            row1.forEach { k -> KeyButton(text = k, modifier = Modifier.weight(1f), onClick = { onKeyClick(k) }) }
+            row1.forEach { k -> GboardKey(primaryText = k, modifier = Modifier.weight(1f), onClick = { onKeyClick(k) }) }
         }
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            row2.forEach { k -> KeyButton(text = k, modifier = Modifier.weight(1f), onClick = { onKeyClick(k) }) }
+            row2.forEach { k -> GboardKey(primaryText = k, modifier = Modifier.weight(1f), onClick = { onKeyClick(k) }) }
         }
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            KeyButton(
-                text = "=/<",
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            GboardFunctionKey(
                 modifier = Modifier.weight(1.4f),
-                backgroundColor = Color(0xFF242936),
-                fontSize = 13.sp,
+                backgroundColor = GboardFnKeyBg,
                 onClick = { onModeChange(KeyboardKeyMode.EXTRA_SYMBOLS) }
-            )
-            row3.forEach { k -> KeyButton(text = k, modifier = Modifier.weight(1f), onClick = { onKeyClick(k) }) }
-            FunctionKeyButton(
-                icon = { Icon(imageVector = Icons.AutoMirrored.Filled.Backspace, contentDescription = "Backspace", tint = Color.White, modifier = Modifier.size(19.dp)) },
+            ) {
+                Text(text = "=\\<", color = GboardTextWhite, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+            }
+
+            row3.forEach { k -> GboardKey(primaryText = k, modifier = Modifier.weight(1f), onClick = { onKeyClick(k) }) }
+
+            GboardFunctionKey(
                 modifier = Modifier.weight(1.4f),
-                backgroundColor = Color(0xFF242936),
+                backgroundColor = GboardFnKeyBg,
                 onClick = onBackspace
-            )
+            ) {
+                Icon(imageVector = Icons.AutoMirrored.Filled.Backspace, contentDescription = "Backspace", tint = GboardTextWhite, modifier = Modifier.size(19.dp))
+            }
         }
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            KeyButton(
-                text = "ABC",
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            GboardFunctionKey(
                 modifier = Modifier.weight(1.4f),
-                backgroundColor = Color(0xFF242936),
-                fontSize = 13.sp,
+                backgroundColor = GboardFnKeyBg,
                 onClick = { onModeChange(KeyboardKeyMode.LETTERS) }
-            )
-            KeyButton(text = ",", modifier = Modifier.weight(1f), onClick = { onKeyClick(",") })
+            ) {
+                Text(text = "ABC", color = GboardTextWhite, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+            }
+            GboardKey(primaryText = ",", modifier = Modifier.weight(1f), onClick = { onKeyClick(",") })
             Surface(
                 onClick = onSpace,
-                modifier = Modifier.weight(4.4f).height(44.dp),
-                shape = RoundedCornerShape(8.dp),
-                color = Color(0xFF2E3442)
+                modifier = Modifier.weight(4.4f).height(46.dp),
+                shape = RoundedCornerShape(6.dp),
+                color = GboardKeyBg
             ) {
-                Box(contentAlignment = Alignment.Center) { Text(text = "space", color = Color(0xFF94A3B8), fontSize = 12.sp) }
+                Box(contentAlignment = Alignment.Center) {
+                    Text(text = "space", color = GboardSubText, fontSize = 12.sp)
+                }
             }
-            KeyButton(text = ".", modifier = Modifier.weight(1f), onClick = { onKeyClick(".") })
-            FunctionKeyButton(
-                icon = { Icon(imageVector = Icons.AutoMirrored.Filled.KeyboardReturn, contentDescription = "Enter", tint = Color.White, modifier = Modifier.size(20.dp)) },
-                modifier = Modifier.weight(1.4f),
-                backgroundColor = Color(0xFF2563EB),
-                onClick = onEnter
-            )
+            GboardKey(primaryText = ".", modifier = Modifier.weight(1f), onClick = { onKeyClick(".") })
+            Surface(
+                onClick = onEnter,
+                modifier = Modifier.weight(1.4f).height(46.dp),
+                shape = RoundedCornerShape(6.dp),
+                color = GboardEnterBlue
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(imageVector = Icons.AutoMirrored.Filled.KeyboardReturn, contentDescription = "Enter", tint = Color.White, modifier = Modifier.size(20.dp))
+                }
+            }
         }
     }
 }
 
 @Composable
-private fun ExtraSymbolsKeyboard(
+private fun GboardExtraSymbolsKeyboard(
     onKeyClick: (String) -> Unit,
     onBackspace: () -> Unit,
     onEnter: () -> Unit,
@@ -722,80 +829,121 @@ private fun ExtraSymbolsKeyboard(
     val row3 = listOf("%", "©", "®", "™", "✓", "[", "]")
 
     Column(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 3.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            row1.forEach { k -> KeyButton(text = k, modifier = Modifier.weight(1f), onClick = { onKeyClick(k) }) }
+            row1.forEach { k -> GboardKey(primaryText = k, modifier = Modifier.weight(1f), onClick = { onKeyClick(k) }) }
         }
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            row2.forEach { k -> KeyButton(text = k, modifier = Modifier.weight(1f), onClick = { onKeyClick(k) }) }
+            row2.forEach { k -> GboardKey(primaryText = k, modifier = Modifier.weight(1f), onClick = { onKeyClick(k) }) }
         }
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            KeyButton(
-                text = "?123",
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            GboardFunctionKey(
                 modifier = Modifier.weight(1.4f),
-                backgroundColor = Color(0xFF242936),
-                fontSize = 13.sp,
+                backgroundColor = GboardFnKeyBg,
                 onClick = { onModeChange(KeyboardKeyMode.SYMBOLS) }
-            )
-            row3.forEach { k -> KeyButton(text = k, modifier = Modifier.weight(1f), onClick = { onKeyClick(k) }) }
-            FunctionKeyButton(
-                icon = { Icon(imageVector = Icons.AutoMirrored.Filled.Backspace, contentDescription = "Backspace", tint = Color.White, modifier = Modifier.size(19.dp)) },
+            ) {
+                Text(text = "?123", color = GboardTextWhite, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+            }
+            row3.forEach { k -> GboardKey(primaryText = k, modifier = Modifier.weight(1f), onClick = { onKeyClick(k) }) }
+            GboardFunctionKey(
                 modifier = Modifier.weight(1.4f),
-                backgroundColor = Color(0xFF242936),
+                backgroundColor = GboardFnKeyBg,
                 onClick = onBackspace
-            )
+            ) {
+                Icon(imageVector = Icons.AutoMirrored.Filled.Backspace, contentDescription = "Backspace", tint = GboardTextWhite, modifier = Modifier.size(19.dp))
+            }
         }
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            KeyButton(
-                text = "ABC",
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            GboardFunctionKey(
                 modifier = Modifier.weight(1.4f),
-                backgroundColor = Color(0xFF242936),
-                fontSize = 13.sp,
+                backgroundColor = GboardFnKeyBg,
                 onClick = { onModeChange(KeyboardKeyMode.LETTERS) }
-            )
-            KeyButton(text = "<", modifier = Modifier.weight(1f), onClick = { onKeyClick("<") })
+            ) {
+                Text(text = "ABC", color = GboardTextWhite, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+            }
+            GboardKey(primaryText = "<", modifier = Modifier.weight(1f), onClick = { onKeyClick("<") })
             Surface(
                 onClick = onSpace,
-                modifier = Modifier.weight(4.4f).height(44.dp),
-                shape = RoundedCornerShape(8.dp),
-                color = Color(0xFF2E3442)
+                modifier = Modifier.weight(4.4f).height(46.dp),
+                shape = RoundedCornerShape(6.dp),
+                color = GboardKeyBg
             ) {
-                Box(contentAlignment = Alignment.Center) { Text(text = "space", color = Color(0xFF94A3B8), fontSize = 12.sp) }
+                Box(contentAlignment = Alignment.Center) { Text(text = "space", color = GboardSubText, fontSize = 12.sp) }
             }
-            KeyButton(text = ">", modifier = Modifier.weight(1f), onClick = { onKeyClick(">") })
-            FunctionKeyButton(
-                icon = { Icon(imageVector = Icons.AutoMirrored.Filled.KeyboardReturn, contentDescription = "Enter", tint = Color.White, modifier = Modifier.size(20.dp)) },
-                modifier = Modifier.weight(1.4f),
-                backgroundColor = Color(0xFF2563EB),
-                onClick = onEnter
-            )
+            GboardKey(primaryText = ">", modifier = Modifier.weight(1f), onClick = { onKeyClick(">") })
+            Surface(
+                onClick = onEnter,
+                modifier = Modifier.weight(1.4f).height(46.dp),
+                shape = RoundedCornerShape(6.dp),
+                color = GboardEnterBlue
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(imageVector = Icons.AutoMirrored.Filled.KeyboardReturn, contentDescription = "Enter", tint = Color.White, modifier = Modifier.size(20.dp))
+                }
+            }
         }
     }
 }
 
 @Composable
-private fun KeyButton(
-    text: String,
+private fun GboardKey(
+    primaryText: String,
+    secondaryText: String? = null,
     modifier: Modifier = Modifier,
-    backgroundColor: Color = Color(0xFF2E3442),
-    fontSize: androidx.compose.ui.unit.TextUnit = 19.sp,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    onLongClick: (() -> Unit)? = null
 ) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val isPressed by interactionSource.collectIsPressedAsState()
+
     Surface(
         onClick = onClick,
-        modifier = modifier.height(44.dp),
-        shape = RoundedCornerShape(8.dp),
-        color = backgroundColor,
-        shadowElevation = 2.dp
+        interactionSource = interactionSource,
+        modifier = modifier
+            .height(46.dp)
+            .then(
+                if (onLongClick != null) {
+                    Modifier.pointerInput(Unit) {
+                        detectTapGestures(
+                            onTap = { onClick() },
+                            onLongPress = { onLongClick() }
+                        )
+                    }
+                } else Modifier
+            ),
+        shape = RoundedCornerShape(6.dp),
+        color = if (isPressed) GboardKeyPressedBg else GboardKeyBg,
+        shadowElevation = 1.dp
     ) {
         Box(contentAlignment = Alignment.Center) {
+            if (secondaryText != null) {
+                Text(
+                    text = secondaryText,
+                    color = GboardSubText,
+                    fontSize = 9.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(top = 2.dp, end = 4.dp)
+                )
+            }
             Text(
-                text = text,
-                color = Color.White,
-                fontSize = fontSize,
-                fontWeight = FontWeight.Medium,
+                text = primaryText,
+                color = GboardTextWhite,
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Normal,
                 textAlign = TextAlign.Center
             )
         }
@@ -803,21 +951,25 @@ private fun KeyButton(
 }
 
 @Composable
-private fun FunctionKeyButton(
-    icon: @Composable () -> Unit,
+private fun GboardFunctionKey(
     modifier: Modifier = Modifier,
-    backgroundColor: Color = Color(0xFF242936),
-    onClick: () -> Unit
+    backgroundColor: Color = GboardFnKeyBg,
+    onClick: () -> Unit,
+    content: @Composable () -> Unit
 ) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val isPressed by interactionSource.collectIsPressedAsState()
+
     Surface(
         onClick = onClick,
-        modifier = modifier.height(44.dp),
-        shape = RoundedCornerShape(8.dp),
-        color = backgroundColor,
-        shadowElevation = 2.dp
+        interactionSource = interactionSource,
+        modifier = modifier.height(46.dp),
+        shape = RoundedCornerShape(6.dp),
+        color = if (isPressed) GboardKeyPressedBg else backgroundColor,
+        shadowElevation = 1.dp
     ) {
         Box(contentAlignment = Alignment.Center) {
-            icon()
+            content()
         }
     }
 }
