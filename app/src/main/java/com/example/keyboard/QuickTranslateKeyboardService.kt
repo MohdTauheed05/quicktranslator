@@ -12,10 +12,16 @@ import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.view.KeyEvent
 import android.view.View
+import android.view.ViewGroup
+import android.view.Window
 import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputMethodManager
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.lifecycle.Lifecycle
@@ -42,9 +48,9 @@ import kotlinx.coroutines.launch
 
 class QuickTranslateKeyboardService : InputMethodService(), LifecycleOwner, ViewModelStoreOwner, SavedStateRegistryOwner {
 
-    private val lifecycleRegistry = LifecycleRegistry(this)
-    private val store = ViewModelStore()
-    private val savedStateRegistryController = SavedStateRegistryController.create(this)
+    private val lifecycleRegistry by lazy { LifecycleRegistry(this) }
+    private val store by lazy { ViewModelStore() }
+    private val savedStateRegistryController by lazy { SavedStateRegistryController.create(this) }
 
     override val lifecycle: Lifecycle get() = lifecycleRegistry
     override val viewModelStore: ViewModelStore get() = store
@@ -84,7 +90,11 @@ class QuickTranslateKeyboardService : InputMethodService(), LifecycleOwner, View
 
     override fun onCreate() {
         super.onCreate()
-        savedStateRegistryController.performRestore(null)
+        try {
+            savedStateRegistryController.performRestore(null)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_CREATE)
 
         serviceScope.launch {
@@ -95,56 +105,93 @@ class QuickTranslateKeyboardService : InputMethodService(), LifecycleOwner, View
         }
     }
 
+    override fun onConfigureWindow(win: Window, isFullscreen: Boolean, isCandidatesOnly: Boolean) {
+        super.onConfigureWindow(win, isFullscreen, isCandidatesOnly)
+        try {
+            win.decorView.setViewTreeLifecycleOwner(this)
+            win.decorView.setViewTreeViewModelStoreOwner(this)
+            win.decorView.setViewTreeSavedStateRegistryOwner(this)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
     override fun onCreateInputView(): View {
+        window?.window?.decorView?.let { decor ->
+            try {
+                decor.setViewTreeLifecycleOwner(this)
+                decor.setViewTreeViewModelStoreOwner(this)
+                decor.setViewTreeSavedStateRegistryOwner(this)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+
+        if (lifecycleRegistry.currentState < Lifecycle.State.CREATED) {
+            lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_CREATE)
+        }
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_START)
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
 
         val composeView = ComposeView(this).apply {
-            setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindowOrReleasedFromPool)
+            layoutParams = ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
             setViewTreeLifecycleOwner(this@QuickTranslateKeyboardService)
             setViewTreeViewModelStoreOwner(this@QuickTranslateKeyboardService)
             setViewTreeSavedStateRegistryOwner(this@QuickTranslateKeyboardService)
+            setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindowOrReleasedFromPool)
 
             setContent {
-                KeyboardLayout(
-                    sourceLang = sourceLang,
-                    targetLang = targetLang,
-                    copiedOriginalText = copiedOriginalText,
-                    copiedTranslatedText = copiedTranslatedText,
-                    isTranslatingCopied = isTranslatingCopied,
-                    liveTypedText = liveTypedText,
-                    liveTranslatedText = liveTranslatedText,
-                    isLiveTranslating = isLiveTranslating,
-                    isLiveModeEnabled = isLiveModeEnabled,
-                    isListeningVoice = isListeningVoice,
-                    voiceStatusText = voiceStatusText,
-                    keyMode = keyMode,
-                    isShifted = isShifted,
-                    isCapsLock = isCapsLock,
-                    showLanguagePickerFor = showLanguagePickerFor,
-                    onKeyClick = { handleKeyClick(it) },
-                    onBackspace = { handleBackspace() },
-                    onEnter = { handleEnter() },
-                    onSpace = { handleSpace() },
-                    onShiftClick = { handleShiftClick() },
-                    onModeChange = { keyMode = it },
-                    onSwapLanguages = { handleSwapLanguages() },
-                    onOpenLanguagePicker = { showLanguagePickerFor = it },
-                    onSelectLanguage = { lang, target -> handleSelectLanguage(lang, target) },
-                    onCloseLanguagePicker = { showLanguagePickerFor = null },
-                    onInsertCopiedTranslation = { handleInsertCopiedTranslation() },
-                    onDismissCopiedChip = { copiedTranslatedText = null },
-                    onInsertLiveTranslation = { handleInsertLiveTranslation() },
-                    onToggleLiveMode = {
-                        isLiveModeEnabled = !isLiveModeEnabled
-                        if (!isLiveModeEnabled) {
-                            liveTypedText = ""
-                            liveTranslatedText = null
-                        }
-                    },
-                    onVoiceClick = { toggleVoiceInput() },
-                    onPasteClipboard = { handlePasteClipboard() }
-                )
+                MaterialTheme(
+                    colorScheme = darkColorScheme(
+                        background = Color(0xFF1E1F22),
+                        surface = Color(0xFF2D2F33),
+                        primary = Color(0xFF1A73E8)
+                    )
+                ) {
+                    KeyboardLayout(
+                        sourceLang = sourceLang,
+                        targetLang = targetLang,
+                        copiedOriginalText = copiedOriginalText,
+                        copiedTranslatedText = copiedTranslatedText,
+                        isTranslatingCopied = isTranslatingCopied,
+                        liveTypedText = liveTypedText,
+                        liveTranslatedText = liveTranslatedText,
+                        isLiveTranslating = isLiveTranslating,
+                        isLiveModeEnabled = isLiveModeEnabled,
+                        isListeningVoice = isListeningVoice,
+                        voiceStatusText = voiceStatusText,
+                        keyMode = keyMode,
+                        isShifted = isShifted,
+                        isCapsLock = isCapsLock,
+                        showLanguagePickerFor = showLanguagePickerFor,
+                        onKeyClick = { handleKeyClick(it) },
+                        onBackspace = { handleBackspace() },
+                        onEnter = { handleEnter() },
+                        onSpace = { handleSpace() },
+                        onShiftClick = { handleShiftClick() },
+                        onModeChange = { keyMode = it },
+                        onSwapLanguages = { handleSwapLanguages() },
+                        onOpenLanguagePicker = { showLanguagePickerFor = it },
+                        onSelectLanguage = { lang, target -> handleSelectLanguage(lang, target) },
+                        onCloseLanguagePicker = { showLanguagePickerFor = null },
+                        onInsertCopiedTranslation = { handleInsertCopiedTranslation() },
+                        onDismissCopiedChip = { copiedTranslatedText = null },
+                        onInsertLiveTranslation = { handleInsertLiveTranslation() },
+                        onToggleLiveMode = {
+                            isLiveModeEnabled = !isLiveModeEnabled
+                            if (!isLiveModeEnabled) {
+                                liveTypedText = ""
+                                liveTranslatedText = null
+                            }
+                        },
+                        onVoiceClick = { toggleVoiceInput() },
+                        onPasteClipboard = { handlePasteClipboard() },
+                        onSwitchIme = { handleSwitchInputMethod() }
+                    )
+                }
             }
         }
         return composeView
@@ -152,7 +199,16 @@ class QuickTranslateKeyboardService : InputMethodService(), LifecycleOwner, View
 
     override fun onStartInputView(info: EditorInfo?, restarting: Boolean) {
         super.onStartInputView(info, restarting)
-        lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
+        window?.window?.decorView?.let { decor ->
+            try {
+                decor.setViewTreeLifecycleOwner(this)
+                decor.setViewTreeViewModelStoreOwner(this)
+                decor.setViewTreeSavedStateRegistryOwner(this)
+            } catch (e: Exception) {}
+        }
+        if (lifecycleRegistry.currentState != Lifecycle.State.RESUMED) {
+            lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
+        }
 
         liveTypedText = ""
         liveTranslatedText = null
@@ -163,7 +219,16 @@ class QuickTranslateKeyboardService : InputMethodService(), LifecycleOwner, View
 
     override fun onWindowShown() {
         super.onWindowShown()
-        lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
+        window?.window?.decorView?.let { decor ->
+            try {
+                decor.setViewTreeLifecycleOwner(this)
+                decor.setViewTreeViewModelStoreOwner(this)
+                decor.setViewTreeSavedStateRegistryOwner(this)
+            } catch (e: Exception) {}
+        }
+        if (lifecycleRegistry.currentState != Lifecycle.State.RESUMED) {
+            lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
+        }
         checkClipboardForTranslation()
     }
 
@@ -171,6 +236,15 @@ class QuickTranslateKeyboardService : InputMethodService(), LifecycleOwner, View
         super.onWindowHidden()
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_PAUSE)
         stopVoiceInput()
+    }
+
+    private fun handleSwitchInputMethod() {
+        try {
+            val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+            imm?.showInputMethodPicker()
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
 
     private fun checkClipboardForTranslation() {
