@@ -41,6 +41,11 @@ class UserPreferencesRepository(context: Context) {
     )
     val businessModeEnabled: StateFlow<Boolean> = _businessModeEnabled.asStateFlow()
 
+    private val _autoCorrectionEnabled = MutableStateFlow(
+        prefs.getBoolean(KEY_AUTO_CORRECTION, true)
+    )
+    val autoCorrectionEnabled: StateFlow<Boolean> = _autoCorrectionEnabled.asStateFlow()
+
     private val _themeMode = MutableStateFlow(
         ThemeMode.valueOf(prefs.getString(KEY_THEME_MODE, ThemeMode.SYSTEM.name) ?: ThemeMode.SYSTEM.name)
     )
@@ -71,6 +76,11 @@ class UserPreferencesRepository(context: Context) {
         _floatingBubbleEnabled.value = enabled
     }
 
+    fun setAutoCorrectionEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_AUTO_CORRECTION, enabled).apply()
+        _autoCorrectionEnabled.value = enabled
+    }
+
     fun setBusinessModeEnabled(enabled: Boolean) {
         prefs.edit().putBoolean(KEY_BUSINESS_MODE, enabled).apply()
         _businessModeEnabled.value = enabled
@@ -91,6 +101,7 @@ class UserPreferencesRepository(context: Context) {
         _targetLanguage.value = Language.ENGLISH
         _sourceLanguage.value = Language.AUTO
         _autoClipboardEnabled.value = true
+        _autoCorrectionEnabled.value = true
         _floatingBubbleEnabled.value = false
         _businessModeEnabled.value = false
         _themeMode.value = ThemeMode.SYSTEM
@@ -101,6 +112,7 @@ class UserPreferencesRepository(context: Context) {
         private const val KEY_TARGET_LANG = "target_lang"
         private const val KEY_SOURCE_LANG = "source_lang"
         private const val KEY_AUTO_CLIPBOARD = "auto_clipboard"
+        private const val KEY_AUTO_CORRECTION = "auto_correction"
         private const val KEY_FLOATING_BUBBLE = "floating_bubble"
         private const val KEY_BUSINESS_MODE = "business_mode"
         private const val KEY_THEME_MODE = "theme_mode"
