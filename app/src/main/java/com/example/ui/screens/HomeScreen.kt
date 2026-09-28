@@ -1,8 +1,13 @@
 package com.example.ui.screens
 
-import android.content.ClipDescription
+import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
+import android.provider.Settings
+import android.view.inputmethod.InputMethodManager
+import android.widget.Toast
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -16,43 +21,32 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.Help
-import androidx.compose.material.icons.filled.AllInclusive
 import androidx.compose.material.icons.filled.ArrowDropDown
-import androidx.compose.material.icons.filled.Bookmark
-import androidx.compose.material.icons.filled.BubbleChart
-import androidx.compose.material.icons.filled.BusinessCenter
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Clear
-import androidx.compose.material.icons.filled.ContentPaste
-import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Keyboard
-import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.Share
-import androidx.compose.material.icons.filled.SwapHoriz
-import androidx.compose.material.icons.filled.Translate
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -63,14 +57,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.domain.model.Language
-import com.example.ui.components.BusinessModeBadge
 import com.example.ui.components.LanguageSelectorModal
 import com.example.ui.viewmodel.MainViewModel
 
@@ -84,78 +77,32 @@ fun HomeScreen(
     onNavigateToSettings: () -> Unit
 ) {
     val context = LocalContext.current
-    val sourceLang by viewModel.sourceLanguage.collectAsStateWithLifecycle()
     val targetLang by viewModel.targetLanguage.collectAsStateWithLifecycle()
-    val inputText by viewModel.inputText.collectAsStateWithLifecycle()
-    val isLoading by viewModel.isLoading.collectAsStateWithLifecycle()
     val isBusinessMode by viewModel.businessModeEnabled.collectAsStateWithLifecycle()
-    val floatingBubbleEnabled by viewModel.floatingBubbleEnabled.collectAsStateWithLifecycle()
-    val showOverlayDialog by viewModel.showOverlayPermissionDialog.collectAsStateWithLifecycle()
-    val currentResult by viewModel.currentResult.collectAsStateWithLifecycle()
-    val errorMessage by viewModel.errorMessage.collectAsStateWithLifecycle()
 
-    var showSourcePicker by remember { mutableStateOf(false) }
     var showTargetPicker by remember { mutableStateOf(false) }
-    var speechSuggestions by remember { mutableStateOf<List<String>>(emptyList()) }
+    var testTextInput by remember { mutableStateOf("") }
 
-    val speechLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
-        contract = androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        if (result.resultCode == android.app.Activity.RESULT_OK) {
-            val candidates = result.data?.getStringArrayListExtra(android.speech.RecognizerIntent.EXTRA_RESULTS) ?: arrayListOf()
-            val (bestSpoken, suggestions) = com.example.domain.translation.SpeechCorrector.processSpeechResults(candidates)
-            if (bestSpoken.isNotBlank()) {
-                viewModel.updateInputText(bestSpoken)
-                speechSuggestions = suggestions
-                viewModel.translate(bestSpoken)
-                onNavigateToTranslation()
-            }
-        }
-    }
+    val imm = remember { context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager }
 
-    fun launchVoiceInput() {
-        val intent = android.content.Intent(android.speech.RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-            putExtra(android.speech.RecognizerIntent.EXTRA_LANGUAGE_MODEL, android.speech.RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            putExtra(android.speech.RecognizerIntent.EXTRA_PROMPT, "Speak now to translate...")
-            putExtra(android.speech.RecognizerIntent.EXTRA_MAX_RESULTS, 5)
-            // Acoustic multi-language hints prevent forcing English/trade brand names (Venol, Ajman, etc.) into Hindi names (Vinod)
-            putExtra("android.speech.extra.EXTRA_ADDITIONAL_LANGUAGES", arrayOf("en-IN", "en-US", "hi-IN", "ur-PK"))
-            if (sourceLang != Language.AUTO) {
-                putExtra(android.speech.RecognizerIntent.EXTRA_LANGUAGE, sourceLang.code)
-            }
-        }
+    val isImeEnabled = remember(context, testTextInput) {
         try {
-            speechLauncher.launch(intent)
-        } catch (e: Exception) {
-            android.widget.Toast.makeText(context, "Voice input not supported on this device", android.widget.Toast.LENGTH_SHORT).show()
-        }
+            imm?.enabledInputMethodList?.any { it.packageName == context.packageName } == true
+        } catch (e: Exception) { false }
     }
 
-    fun readClipboardAndTranslate() {
-        if (inputText.isNotBlank()) {
-            viewModel.translate(inputText)
-            onNavigateToTranslation()
-            return
-        }
+    val isImeActive = remember(context, testTextInput) {
+        try {
+            val currentIme = Settings.Secure.getString(context.contentResolver, Settings.Secure.DEFAULT_INPUT_METHOD)
+            currentIme?.contains(context.packageName) == true
+        } catch (e: Exception) { false }
+    }
 
-        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-        if (clipboard != null && clipboard.hasPrimaryClip()) {
-            val clip = clipboard.primaryClip
-            if (clip != null && clip.itemCount > 0) {
-                val item = clip.getItemAt(0)
-                val text = item.coerceToText(context)?.toString()?.trim()
-                if (!text.isNullOrBlank()) {
-                    viewModel.updateInputText(text)
-                    viewModel.translate(text)
-                    onNavigateToTranslation()
-                    return
-                }
-            }
-        }
-        viewModel.translate(inputText)
-        if (inputText.isNotBlank()) {
-            onNavigateToTranslation()
-        }
+    fun copyToClipboard(text: String, label: String) {
+        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        val clip = ClipData.newPlainText(label, text)
+        clipboard.setPrimaryClip(clip)
+        Toast.makeText(context, "Copied to clipboard! Now tap the test box below to see it auto-translate!", Toast.LENGTH_LONG).show()
     }
 
     Scaffold(
@@ -165,14 +112,14 @@ fun HomeScreen(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Surface(
                             shape = RoundedCornerShape(10.dp),
-                            color = MaterialTheme.colorScheme.primary,
+                            color = Color(0xFF1A73E8),
                             modifier = Modifier.size(36.dp)
                         ) {
                             Box(contentAlignment = Alignment.Center) {
                                 Icon(
-                                    imageVector = Icons.Default.Translate,
+                                    imageVector = Icons.Default.Keyboard,
                                     contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.onPrimary,
+                                    tint = Color.White,
                                     modifier = Modifier.size(20.dp)
                                 )
                             }
@@ -180,13 +127,13 @@ fun HomeScreen(
                         Spacer(modifier = Modifier.width(10.dp))
                         Column {
                             Text(
-                                text = "QUICKTRANSLATE",
+                                text = "TRANSLATION KEYBOARD",
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.Black,
                                 letterSpacing = 0.5.sp
                             )
                             Text(
-                                text = "100% Free · Universal Assistant",
+                                text = "Gboard Style · Universal WhatsApp Assistant",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.primary,
                                 fontWeight = FontWeight.SemiBold
@@ -195,14 +142,8 @@ fun HomeScreen(
                     }
                 },
                 actions = {
-                    IconButton(
-                        onClick = onNavigateToSettings,
-                        modifier = Modifier.testTag("settings_header_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Settings,
-                            contentDescription = "Settings"
-                        )
+                    IconButton(onClick = onNavigateToSettings) {
+                        Icon(imageVector = Icons.Default.Settings, contentDescription = "Settings")
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -218,702 +159,341 @@ fun HomeScreen(
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 16.dp, vertical = 8.dp)
         ) {
-            // Free Unlimited Banner with Business Mode Badge
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 4.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                BusinessModeBadge(
-                    isEnabled = isBusinessMode,
-                    onClick = { viewModel.toggleBusinessMode() }
-                )
-                Surface(
-                    shape = RoundedCornerShape(8.dp),
-                    color = MaterialTheme.colorScheme.secondaryContainer
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.AllInclusive,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onSecondaryContainer,
-                            modifier = Modifier.size(14.dp)
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(
-                            text = "Free & Unlimited",
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSecondaryContainer
-                        )
-                    }
-                }
-            }
 
-            Spacer(modifier = Modifier.height(10.dp))
-
-            // NEW: Samsung-style Edge Pull Handle Card
+            // 1. KEYBOARD SETUP & ACTIVATION CARD
             Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("floating_bubble_banner_card"),
-                shape = RoundedCornerShape(18.dp),
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(20.dp),
                 colors = CardDefaults.cardColors(
-                    containerColor = if (floatingBubbleEnabled) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f)
+                    containerColor = if (isImeActive) Color(0xFF0F5132).copy(alpha = 0.15f) else MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)
+                ),
+                border = androidx.compose.foundation.BorderStroke(
+                    1.dp,
+                    if (isImeActive) Color(0xFF198754) else MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)
                 )
             ) {
-                Row(
-                    modifier = Modifier.padding(16.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Surface(
-                        shape = RoundedCornerShape(12.dp),
-                        color = if (floatingBubbleEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface,
-                        modifier = Modifier.size(44.dp)
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(
-                                imageVector = Icons.Default.BubbleChart,
-                                contentDescription = null,
-                                tint = if (floatingBubbleEnabled) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(24.dp)
-                            )
-                        }
-                    }
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "Samsung Edge Pull Handle",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = if (floatingBubbleEnabled) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
-                        )
-                        Text(
-                            text = if (floatingBubbleEnabled) "Active on screen edge! Pull or tap the edge line over WhatsApp to translate." else "Show slim Samsung-style edge line for 1-pull instant translation over WhatsApp.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = if (floatingBubbleEnabled) MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f) else MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Switch(
-                        checked = floatingBubbleEnabled,
-                        onCheckedChange = { viewModel.toggleFloatingBubble(context) },
-                        modifier = Modifier.testTag("floating_bubble_switch")
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(10.dp))
-
-            // NEW: QuickTranslate Keyboard Activation Card
-            val imm = remember { context.getSystemService(Context.INPUT_METHOD_SERVICE) as? android.view.inputmethod.InputMethodManager }
-            val isImeEnabled = remember(context) {
-                try {
-                    imm?.enabledInputMethodList?.any { it.packageName == context.packageName } == true
-                } catch (e: Exception) { false }
-            }
-
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("keyboard_activation_card"),
-                shape = RoundedCornerShape(18.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.5f)
-                )
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
+                Column(modifier = Modifier.padding(18.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Surface(
                             shape = RoundedCornerShape(12.dp),
-                            color = MaterialTheme.colorScheme.tertiary,
-                            modifier = Modifier.size(44.dp)
+                            color = if (isImeActive) Color(0xFF198754) else MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(46.dp)
                         ) {
                             Box(contentAlignment = Alignment.Center) {
                                 Icon(
-                                    imageVector = Icons.Default.Keyboard,
+                                    imageVector = if (isImeActive) Icons.Default.CheckCircle else Icons.Default.Keyboard,
                                     contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.onTertiary,
+                                    tint = Color.White,
                                     modifier = Modifier.size(24.dp)
                                 )
                             }
                         }
-                        Spacer(modifier = Modifier.width(12.dp))
+                        Spacer(modifier = Modifier.width(14.dp))
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "QuickTranslate Keyboard",
-                                style = MaterialTheme.typography.titleSmall,
+                                text = if (isImeActive) "QuickTranslate Keyboard Active! ✓" else "Setup QuickTranslate Keyboard",
+                                style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onTertiaryContainer
+                                color = if (isImeActive) Color(0xFF198754) else MaterialTheme.colorScheme.onSurface
                             )
                             Text(
-                                text = "Auto-translates copied foreign text right on your keyboard & live translates as you type!",
+                                text = if (isImeActive) "Ready to use in WhatsApp, SMS, and any app!" else "Complete the 2 steps below to use as your keyboard.",
                                 style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.85f)
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(12.dp))
+                    Spacer(modifier = Modifier.height(14.dp))
 
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        if (!isImeEnabled) {
-                            Button(
-                                onClick = {
-                                    val intent = android.content.Intent(android.provider.Settings.ACTION_INPUT_METHOD_SETTINGS)
-                                    context.startActivity(intent)
-                                },
-                                modifier = Modifier.weight(1f),
-                                shape = RoundedCornerShape(10.dp)
-                            ) {
-                                Text("1. Enable Keyboard in Settings", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        Surface(
+                            shape = CircleShape,
+                            color = if (isImeEnabled) Color(0xFF198754) else MaterialTheme.colorScheme.surfaceVariant,
+                            modifier = Modifier.size(26.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                if (isImeEnabled) {
+                                    Icon(imageVector = Icons.Default.Check, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
+                                } else {
+                                    Text("1", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                }
                             }
-                        } else {
-                            Button(
-                                onClick = {
-                                    imm?.showInputMethodPicker()
-                                },
-                                modifier = Modifier.weight(1f),
-                                shape = RoundedCornerShape(10.dp)
-                            ) {
-                                Text("2. Switch to QuickTranslate Keyboard ⌨️", fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                            }
+                        }
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("1. Enable in System Settings", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                            Text("Turn switch ON for QuickTranslate", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Button(
+                            onClick = {
+                                val intent = Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)
+                                context.startActivity(intent)
+                            },
+                            shape = RoundedCornerShape(8.dp),
+                            enabled = !isImeEnabled,
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                        ) {
+                            Text(if (isImeEnabled) "Enabled ✓" else "Enable", fontSize = 12.sp)
                         }
                     }
 
                     Spacer(modifier = Modifier.height(10.dp))
 
-                    // Test Keyboard Input field
-                    var testKeyboardText by remember { mutableStateOf("") }
-                    OutlinedTextField(
-                        value = testKeyboardText,
-                        onValueChange = { testKeyboardText = it },
+                    Row(
                         modifier = Modifier.fillMaxWidth(),
-                        placeholder = { Text("Tap here to test Gboard keyboard...", fontSize = 13.sp) },
-                        shape = RoundedCornerShape(10.dp),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedContainerColor = MaterialTheme.colorScheme.surface,
-                            unfocusedContainerColor = MaterialTheme.colorScheme.surface
-                        ),
-                        singleLine = true
-                    )
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Surface(
+                            shape = CircleShape,
+                            color = if (isImeActive) Color(0xFF198754) else MaterialTheme.colorScheme.surfaceVariant,
+                            modifier = Modifier.size(26.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                if (isImeActive) {
+                                    Icon(imageVector = Icons.Default.Check, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
+                                } else {
+                                    Text("2", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                }
+                            }
+                        }
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("2. Set as Default Keyboard", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                            Text("Choose QuickTranslate from the list", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Button(
+                            onClick = { imm?.showInputMethodPicker() },
+                            shape = RoundedCornerShape(8.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1A73E8))
+                        ) {
+                            Text(if (isImeActive) "Active ✓" else "Select ⌨️", fontSize = 12.sp)
+                        }
+                    }
                 }
             }
 
-            Spacer(modifier = Modifier.height(14.dp))
+            Spacer(modifier = Modifier.height(16.dp))
 
-            // Main Translation Card
+            // 2. INTERACTIVE KEYBOARD TEST BENCH
             Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("main_translation_card"),
+                modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(20.dp),
                 colors = CardDefaults.cardColors(
                     containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
                 )
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
-                    // Language Selection Row
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        // Source Language Button
+                        Text(
+                            text = "Interactive Keyboard Test Bench",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold
+                        )
                         Surface(
-                            modifier = Modifier
-                                .weight(1f)
-                                .clip(RoundedCornerShape(12.dp))
-                                .clickable { showSourcePicker = true }
-                                .testTag("source_language_button"),
-                            color = MaterialTheme.colorScheme.surface,
-                            shape = RoundedCornerShape(12.dp)
+                            shape = RoundedCornerShape(8.dp),
+                            color = Color(0xFF1A73E8).copy(alpha = 0.2f)
                         ) {
-                            Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
-                                Text(
-                                    text = "Source Language",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier.padding(top = 2.dp)
-                                ) {
-                                    Text(text = sourceLang.flagEmoji, fontSize = 16.sp)
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text(
-                                        text = sourceLang.name,
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        fontWeight = FontWeight.Bold,
-                                        maxLines = 1
-                                    )
-                                    Spacer(modifier = Modifier.weight(1f))
-                                    Icon(
-                                        imageVector = Icons.Default.ArrowDropDown,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                }
-                            }
-                        }
-
-                        // Swap Button
-                        IconButton(
-                            onClick = { viewModel.swapLanguages() },
-                            modifier = Modifier
-                                .padding(horizontal = 4.dp)
-                                .testTag("swap_languages_button")
-                        ) {
-                            Surface(
-                                shape = RoundedCornerShape(50),
-                                color = MaterialTheme.colorScheme.primaryContainer,
-                                modifier = Modifier.size(36.dp)
-                            ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Icon(
-                                        imageVector = Icons.Default.SwapHoriz,
-                                        contentDescription = "Swap Languages",
-                                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                }
-                            }
-                        }
-
-                        // Target Language Button
-                        Surface(
-                            modifier = Modifier
-                                .weight(1f)
-                                .clip(RoundedCornerShape(12.dp))
-                                .clickable { showTargetPicker = true }
-                                .testTag("target_language_button"),
-                            color = MaterialTheme.colorScheme.surface,
-                            shape = RoundedCornerShape(12.dp)
-                        ) {
-                            Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
-                                Text(
-                                    text = "Target Language",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier.padding(top = 2.dp)
-                                ) {
-                                    Text(text = targetLang.flagEmoji, fontSize = 16.sp)
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text(
-                                        text = targetLang.name,
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        fontWeight = FontWeight.Bold,
-                                        maxLines = 1
-                                    )
-                                    Spacer(modifier = Modifier.weight(1f))
-                                    Icon(
-                                        imageVector = Icons.Default.ArrowDropDown,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                }
-                            }
+                            Text(
+                                text = "Gboard Style",
+                                color = Color(0xFF1A73E8),
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 11.sp,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                            )
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(14.dp))
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Text(
+                        text = "Tap the field below to bring up the keyboard. Try fast typing, holding Backspace to continuously auto-erase, and live translation!",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    Spacer(modifier = Modifier.height(10.dp))
 
                     OutlinedTextField(
-                        value = inputText,
-                        onValueChange = { viewModel.updateInputText(it) },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("home_text_input"),
-                        placeholder = {
-                            Text(
-                                "Type or paste message here...",
-                                style = MaterialTheme.typography.bodyMedium
-                            )
-                        },
+                        value = testTextInput,
+                        onValueChange = { testTextInput = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        placeholder = { Text("Tap here to open Gboard translation keyboard...") },
                         trailingIcon = {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                IconButton(onClick = { launchVoiceInput() }) {
-                                    Icon(
-                                        imageVector = Icons.Default.Mic,
-                                        contentDescription = "Speak to Translate",
-                                        tint = MaterialTheme.colorScheme.primary
-                                    )
-                                }
-                                if (inputText.isNotEmpty()) {
-                                    IconButton(onClick = { viewModel.updateInputText("") }) {
-                                        Icon(imageVector = Icons.Default.Clear, contentDescription = "Clear")
-                                    }
-                                } else {
-                                    IconButton(
-                                        onClick = {
-                                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-                                            val text = clipboard?.primaryClip?.getItemAt(0)?.coerceToText(context)?.toString()?.trim()
-                                            if (!text.isNullOrBlank()) {
-                                                viewModel.updateInputText(text)
-                                            }
-                                        }
-                                    ) {
-                                        Icon(imageVector = Icons.Default.ContentPaste, contentDescription = "Paste from Clipboard", tint = MaterialTheme.colorScheme.primary)
-                                    }
+                            if (testTextInput.isNotEmpty()) {
+                                IconButton(onClick = { testTextInput = "" }) {
+                                    Icon(imageVector = Icons.Default.Clear, contentDescription = "Clear")
                                 }
                             }
                         },
-                        minLines = 2,
-                        maxLines = 4,
-                        shape = RoundedCornerShape(14.dp),
+                        shape = RoundedCornerShape(12.dp),
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedContainerColor = MaterialTheme.colorScheme.surface,
                             unfocusedContainerColor = MaterialTheme.colorScheme.surface
-                        )
-                    )
-
-                    if (speechSuggestions.isNotEmpty()) {
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            Text(
-                                text = "Did you mean:",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            speechSuggestions.forEach { alt ->
-                                Surface(
-                                    onClick = {
-                                        viewModel.updateInputText(alt)
-                                        viewModel.translate(alt)
-                                        speechSuggestions = emptyList()
-                                        onNavigateToTranslation()
-                                    },
-                                    shape = RoundedCornerShape(8.dp),
-                                    color = MaterialTheme.colorScheme.secondaryContainer
-                                ) {
-                                    Text(
-                                        text = alt,
-                                        style = MaterialTheme.typography.labelSmall,
-                                        fontWeight = FontWeight.Bold,
-                                        color = MaterialTheme.colorScheme.onSecondaryContainer,
-                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                                    )
-                                }
-                            }
-                        }
-                    }
-
-                    if (errorMessage != null) {
-                        Text(
-                            text = errorMessage ?: "",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.error,
-                            modifier = Modifier.padding(top = 6.dp, start = 4.dp)
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(14.dp))
-
-                    // Primary Action: [ Paste & Translate ]
-                    Button(
-                        onClick = { readClipboardAndTranslate() },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(52.dp)
-                            .testTag("paste_and_translate_button"),
-                        shape = RoundedCornerShape(14.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.primary
                         ),
-                        enabled = !isLoading
-                    ) {
-                        if (isLoading) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(24.dp),
-                                color = MaterialTheme.colorScheme.onPrimary,
-                                strokeWidth = 2.dp
-                            )
-                        } else {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(
-                                    imageVector = Icons.Default.ContentPaste,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(
-                                    text = if (inputText.isNotBlank()) "Translate Message" else "Paste & Translate",
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(18.dp))
-
-            // Quick Actions Section
-            Text(
-                text = "Quick Actions",
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(start = 4.dp, bottom = 8.dp)
-            )
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Surface(
-                    modifier = Modifier
-                        .weight(1f)
-                        .clip(RoundedCornerShape(14.dp))
-                        .clickable {
-                            viewModel.updateInputText("مرحبا، كيف حالك؟")
-                            viewModel.translate("مرحبا، كيف حالك؟")
-                            onNavigateToTranslation()
-                        }
-                        .testTag("quick_action_demo_share"),
-                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
-                    shape = RoundedCornerShape(14.dp)
-                ) {
-                    Column(
-                        modifier = Modifier.padding(12.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Share,
-                            contentDescription = "Share Text",
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(24.dp)
-                        )
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Text(
-                            text = "Try Arabic",
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                    }
-                }
-
-                Surface(
-                    modifier = Modifier
-                        .weight(1f)
-                        .clip(RoundedCornerShape(14.dp))
-                        .clickable {
-                            val businessSample = "MOQ 500 PCS\nPrice USD 0.075/PC\nFOB Ningbo\nPayment 30% advance"
-                            viewModel.updateInputText(businessSample)
-                            viewModel.translate(businessSample)
-                            onNavigateToTranslation()
-                        }
-                        .testTag("quick_action_type_text"),
-                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
-                    shape = RoundedCornerShape(14.dp)
-                ) {
-                    Column(
-                        modifier = Modifier.padding(12.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.BusinessCenter,
-                            contentDescription = "Business Sample",
-                            tint = MaterialTheme.colorScheme.tertiary,
-                            modifier = Modifier.size(24.dp)
-                        )
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Text(
-                            text = "Quotation Demo",
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                    }
-                }
-
-                Surface(
-                    modifier = Modifier
-                        .weight(1f)
-                        .clip(RoundedCornerShape(14.dp))
-                        .clickable(onClick = onNavigateToHistory)
-                        .testTag("quick_action_history"),
-                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
-                    shape = RoundedCornerShape(14.dp)
-                ) {
-                    Column(
-                        modifier = Modifier.padding(12.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.History,
-                            contentDescription = "History",
-                            tint = MaterialTheme.colorScheme.secondary,
-                            modifier = Modifier.size(24.dp)
-                        )
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Text(
-                            text = "History",
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                    }
-                }
-
-                Surface(
-                    modifier = Modifier
-                        .weight(1f)
-                        .clip(RoundedCornerShape(14.dp))
-                        .clickable(onClick = onNavigateToFavorites)
-                        .testTag("quick_action_favorites"),
-                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
-                    shape = RoundedCornerShape(14.dp)
-                ) {
-                    Column(
-                        modifier = Modifier.padding(12.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Bookmark,
-                            contentDescription = "Favorites",
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(24.dp)
-                        )
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Text(
-                            text = "Favorites",
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(18.dp))
-
-            // Recent Translation Quick Card (if exists)
-            if (currentResult != null) {
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { onNavigateToTranslation() }
-                        .testTag("recent_translation_preview_card"),
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surface
+                        minLines = 2,
+                        maxLines = 4
                     )
-                ) {
-                    Column(modifier = Modifier.padding(14.dp)) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    Text(
+                        text = "Try Clipboard Auto-Translate Demos:",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = {
+                                copyToClipboard("مرحبا كيف حالك، هل وصل الشحن إلى عجمان؟", "Arabic Message")
+                            },
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(10.dp)
                         ) {
-                            Text(
-                                text = "LATEST RESULT",
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Filled.ArrowForward,
-                                contentDescription = "View",
-                                modifier = Modifier.size(16.dp)
-                            )
+                            Text("📋 Copy Arabic Text", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                         }
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Text(
-                            text = currentResult?.translatedText ?: "",
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontWeight = FontWeight.SemiBold,
-                            maxLines = 2
-                        )
+
+                        OutlinedButton(
+                            onClick = {
+                                copyToClipboard("Venol motor oil 20W50 order 500 cartons MOQ delivery Sharjah", "Trade Message")
+                            },
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Text("📋 Copy Trade/Venol", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                        }
                     }
                 }
-                Spacer(modifier = Modifier.height(14.dp))
             }
 
-            // How Instant WhatsApp Translation Works
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // 3. KEYBOARD SETTINGS & PREFERENCES
             Card(
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(16.dp),
+                shape = RoundedCornerShape(20.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surface
+                )
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        text = "Keyboard Translation Preferences",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .clickable { showTargetPicker = true }
+                            .padding(vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column {
+                            Text("Default Target Language", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                            Text("Messages translate to this language", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = MaterialTheme.colorScheme.primaryContainer
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                            ) {
+                                Text(
+                                    text = "${targetLang.flagEmoji} ${targetLang.name}",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 13.sp,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Icon(
+                                    imageVector = Icons.Default.ArrowDropDown,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp),
+                                    tint = MaterialTheme.colorScheme.onPrimaryContainer
+                                )
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Commercial & Trade Words Protection", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                            Text("Protects Venol, Ajman, MOQ, CIF, FOB from incorrect voice & translation errors", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Switch(
+                            checked = isBusinessMode,
+                            onCheckedChange = { viewModel.toggleBusinessMode() }
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // 4. HOW TO USE IN WHATSAPP GUIDE
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(20.dp),
                 colors = CardDefaults.cardColors(
                     containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
                 )
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.Help,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(22.dp)
-                        )
-                        Spacer(modifier = Modifier.width(10.dp))
-                        Text(
-                            text = "2 Ways to Translate Instantly Inside WhatsApp",
-                            style = MaterialTheme.typography.labelLarge,
-                            fontWeight = FontWeight.Bold
-                        )
+                        Icon(imageVector = Icons.AutoMirrored.Filled.Help, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("How to Use QuickTranslate Inside WhatsApp", fontWeight = FontWeight.Bold, fontSize = 14.sp)
                     }
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = "1. Floating Bubble: Enable the switch above. When you copy a message in WhatsApp, tap the floating bubble to see the instant translation popup directly over your chat.\n\n2. Highlight & QuickTranslate: Select message text in WhatsApp -> tap [ QuickTranslate ] in the popup menu to translate without leaving the app.",
+                        text = "1. Reading Messages: Long press any message in WhatsApp and tap Copy. When you tap the reply box, your keyboard opens with the translated message ready at the top!\n\n2. Sending Messages: Tap the [⚡ Live] chip on the keyboard toolbar. Type in Roman Hindi or English — the keyboard continuously translates to Arabic/Urdu as you type, and taps replace to send instantly.\n\n3. Rapid Erase: Long press the Backspace key to continuously erase whole lines smoothly without tapping one by one.",
                         style = MaterialTheme.typography.bodySmall,
                         lineHeight = 18.sp,
                         color = MaterialTheme.colorScheme.onSurface
                     )
                 }
             }
+
+            Spacer(modifier = Modifier.height(20.dp))
         }
-    }
-
-    if (showOverlayDialog) {
-        AlertDialog(
-            onDismissRequest = { viewModel.dismissOverlayPermissionDialog() },
-            title = { Text("Enable Display Over Other Apps") },
-            text = {
-                Text("To show the instant translation popup and floating bubble directly over WhatsApp, Android requires the 'Display over other apps' permission.")
-            },
-            confirmButton = {
-                Button(onClick = { viewModel.requestOverlayPermission(context) }) {
-                    Text("Open Settings")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { viewModel.dismissOverlayPermissionDialog() }) {
-                    Text("Cancel")
-                }
-            }
-        )
-    }
-
-    if (showSourcePicker) {
-        LanguageSelectorModal(
-            title = "Select Source Language",
-            currentLanguage = sourceLang,
-            allowAutoDetect = true,
-            onLanguageSelected = { viewModel.setSourceLanguage(it) },
-            onDismiss = { showSourcePicker = false }
-        )
     }
 
     if (showTargetPicker) {
         LanguageSelectorModal(
-            title = "Select Target Language",
+            title = "Select Default Target Language",
             currentLanguage = targetLang,
             allowAutoDetect = false,
-            onLanguageSelected = { viewModel.setTargetLanguage(it) },
+            onLanguageSelected = {
+                viewModel.setTargetLanguage(it)
+                showTargetPicker = false
+            },
             onDismiss = { showTargetPicker = false }
         )
     }
